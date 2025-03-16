@@ -1,0 +1,94 @@
+Sub ImportSharePointData()
+    ' This macro reads a SharePoint URL from cell D7,
+    ' imports data from "SPECIFIC SHEET" as text to preserve trailing zeros,
+    ' and renames the sheet based on the value in cell D10
+    
+    Dim ws As Worksheet
+    Dim sharePointURL As String
+    Dim newSheetName As String
+    Dim queryTable As QueryTable
+    Dim excelFileName As String
+    Dim specificSheetName As String
+    
+    ' Set reference to active worksheet
+    Set ws = ActiveSheet
+    
+    ' Get SharePoint URL from cell D7
+    sharePointURL = ws.Range("D7").Value
+    
+    ' Get new sheet name from cell D10
+    newSheetName = ws.Range("D10").Value
+    
+    ' Set the specific sheet name to read from
+    specificSheetName = "SPECIFIC SHEET"
+    
+    ' Validate inputs
+    If Len(sharePointURL) = 0 Then
+        MsgBox "SharePoint URL in cell D7 is empty!", vbExclamation
+        Exit Sub
+    End If
+    
+    If Len(newSheetName) = 0 Then
+        MsgBox "Sheet name in cell D10 is empty!", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Create a new worksheet
+    Set ws = Worksheets.Add
+    
+    ' Create a QueryTable to import data from SharePoint
+    ' For Excel files on SharePoint, we need to use a different approach
+    ' Create a connection to the Excel file
+    Set queryTable = ws.QueryTables.Add( _
+        Connection:="URL;" & sharePointURL, _
+        Destination:=ws.Range("A1"))
+    
+    ' We'll handle the specific sheet selection after initial connection
+    
+    ' Configure QueryTable settings to import everything as text
+    With queryTable
+        .WebSelectionType = xlSpecifiedTables
+        .WebFormatting = xlWebFormattingAll
+        .WebPreFormattedTextToColumns = True
+        .WebConsecutiveDelimitersAsOne = True
+        .WebSingleBlockTextImport = False
+        .WebDisableDateRecognition = True
+        .WebDisableRedirections = False
+        
+        ' Specify which sheet to import from (for Excel files)
+        If InStr(LCase(sharePointURL), ".xlsx") > 0 Or InStr(LCase(sharePointURL), ".xlsm") > 0 Or InStr(LCase(sharePointURL), ".xls") > 0 Then
+            .WebTables = specificSheetName & "$"
+        End If
+        
+        .Refresh BackgroundQuery:=False
+        
+        ' Set all columns to text format to preserve trailing zeros
+        For i = 1 To .ResultRange.Columns.Count
+            .ResultRange.Columns(i).TextToColumns _
+                Destination:=.ResultRange.Columns(i).Cells(1), _
+                DataType:=xlDelimited, _
+                TextQualifier:=xlDoubleQuote, _
+                ConsecutiveDelimiter:=False, _
+                Tab:=True, _
+                Semicolon:=False, _
+                Comma:=False, _
+                Space:=False, _
+                Other:=False, _
+                FieldInfo:=Array(1, 2)  ' Force all columns to be imported as text
+        Next i
+    End With
+    
+    ' Delete the QueryTable but keep the data
+    queryTable.Delete
+    
+    ' Rename the worksheet
+    On Error Resume Next
+    ws.Name = newSheetName
+    If Err.Number <> 0 Then
+        MsgBox "Could not rename sheet to '" & newSheetName & "'. " & _
+               "Name may be invalid or already in use.", vbExclamation
+    End If
+    On Error GoTo 0
+    
+    MsgBox "Data imported from SharePoint and sheet renamed to '" & ws.Name & "'", vbInformation
+End Sub
