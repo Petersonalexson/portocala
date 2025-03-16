@@ -1,180 +1,77 @@
 Option Explicit
 
-' Create a UserForm for progress display
-Sub ShowImportForm()
-    ' Check if the form already exists
-    Dim frm As Object
-    On Error Resume Next
-    Set frm = UserForms.Item("ImportProgressForm")
-    On Error GoTo 0
-    
-    ' If form doesn't exist, create it
-    If frm Is Nothing Then
-        CreateImportProgressForm
-    End If
-    
-    ' Show the form
-    UserForms.Item("ImportProgressForm").Show
-End Sub
-
-Sub CreateImportProgressForm()
-    ' Create a progress form programmatically
-    Dim VBProj As Object
-    Dim VBComp As Object
-    Dim frm As Object
-    Dim lblStatus As Object
-    Dim lblProgress As Object
-    Dim progressBar As Object
-    Dim btnCancel As Object
-    
-    ' Reference the VBA project
-    Set VBProj = ThisWorkbook.VBProject
-    
-    ' Add a UserForm
-    Set VBComp = VBProj.VBComponents.Add(3) ' 3 = vbext_ct_MSForm
-    VBComp.Name = "ImportProgressForm"
-    Set frm = VBComp.Designer
-    
-    ' Set form properties
-    frm.Caption = "Import Progress"
-    frm.Width = 300
-    frm.Height = 150
-    
-    ' Add status label
-    Set lblStatus = frm.Controls.Add("Forms.Label.1", "lblStatus", True)
-    With lblStatus
-        .Caption = "Ready to import..."
-        .Left = 20
-        .Top = 20
-        .Width = 260
-        .Height = 20
-    End With
-    
-    ' Add progress label
-    Set lblProgress = frm.Controls.Add("Forms.Label.1", "lblProgress", True)
-    With lblProgress
-        .Caption = "0%"
-        .Left = 20
-        .Top = 50
-        .Width = 260
-        .Height = 20
-    End With
-    
-    ' Add progress bar (using a frame as a makeshift progress bar)
-    Set progressBar = frm.Controls.Add("Forms.Frame.1", "progressBar", True)
-    With progressBar
-        .Left = 20
-        .Top = 75
-        .Width = 0  ' Initially 0 width
-        .Height = 15
-        .BackColor = &H00FF00  ' Green
-        .SpecialEffect = 0     ' Flat appearance
-    End With
-    
-    ' Add background frame for progress bar
-    Dim progressBg As Object
-    Set progressBg = frm.Controls.Add("Forms.Frame.1", "progressBg", True)
-    With progressBg
-        .Left = 20
-        .Top = 75
-        .Width = 260
-        .Height = 15
-        .BackColor = &HE0E0E0  ' Light gray
-        .SpecialEffect = 0     ' Flat appearance
-    End With
-    
-    ' Ensure the progress bar is above the background
-    progressBar.ZOrder (0)
-    
-    ' Add a cancel button
-    Set btnCancel = frm.Controls.Add("Forms.CommandButton.1", "btnCancel", True)
-    With btnCancel
-        .Caption = "Cancel"
-        .Left = 110
-        .Top = 100
-        .Width = 80
-        .Height = 30
-    End With
-    
-    ' Add the UserInitialize event for initialization
-    Dim codeModule As Object
-    Set codeModule = VBComp.CodeModule
-    
-    ' Add code to the form
-    Dim codeText As String
-    codeText = _
-        "Private Sub UserForm_Initialize()" & vbNewLine & _
-        "    Call ImportFromLocalFile" & vbNewLine & _
-        "End Sub" & vbNewLine & vbNewLine & _
-        "Private Sub btnCancel_Click()" & vbNewLine & _
-        "    Tag = ""Cancelled""" & vbNewLine & _
-        "    Me.Hide" & vbNewLine & _
-        "End Sub"
-    
-    codeModule.AddFromString codeText
-End Sub
-
-Sub ImportFromLocalFile()
-    ' This macro allows user to browse for a downloaded Excel file
-    ' and imports "SPECIFIC SHEET" with progress indicators
+Sub ImportSpecificSheet()
+    ' This macro allows user to browse for an Excel file
+    ' Copies "SPECIFIC SHEET" to a new sheet after the fourth sheet
+    ' Names the new sheet based on the value in cell D7
     
     Dim sourceFilePath As String
     Dim newSheetName As String
-    Dim ws As Worksheet
+    Dim targetWs As Worksheet
     Dim sourceWb As Workbook
     Dim sourceWs As Worksheet
-    Dim fd As Object
-    Dim frmProgress As Object
-    Dim progressMax As Long
-    Dim progressCurrent As Long
+    Dim fileDialog As Office.FileDialog
+    Dim hasSheetWithName As Boolean
+    Dim existingSheet As Worksheet
     
-    ' Get the progress form reference
-    Set frmProgress = UserForms.Item("ImportProgressForm")
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
     
-    ' Get the new sheet name from cell D10 of sheet 2
-    newSheetName = ThisWorkbook.Sheets(2).Range("D10").Value
+    ' Get the new sheet name from cell D7
+    newSheetName = ThisWorkbook.Sheets(1).Range("D7").Value
     
-    ' Validate input
-    If Len(newSheetName) = 0 Then
-        frmProgress.lblStatus.Caption = "Error: No sheet name provided in D10"
-        Sleep 2000
-        frmProgress.Hide
-        MsgBox "Please enter a sheet name in cell D10 of the second sheet!", vbExclamation
+    ' Validate the sheet name input
+    If Len(Trim(newSheetName)) = 0 Then
+        MsgBox "Please enter a sheet name in cell D7!", vbExclamation
+        Application.ScreenUpdating = True
+        Application.DisplayAlerts = True
         Exit Sub
     End If
     
-    ' Check if we have at least 3 sheets
-    If ThisWorkbook.Sheets.Count < 3 Then
-        frmProgress.lblStatus.Caption = "Error: Not enough sheets"
-        Sleep 2000
-        frmProgress.Hide
-        MsgBox "This workbook needs at least 3 sheets. Please add more sheets.", vbExclamation
+    ' Check if we have at least 4 sheets
+    If ThisWorkbook.Sheets.Count < 4 Then
+        MsgBox "This workbook needs at least 4 sheets. Please add more sheets.", vbExclamation
+        Application.ScreenUpdating = True
+        Application.DisplayAlerts = True
         Exit Sub
     End If
     
-    ' Update status
-    frmProgress.lblStatus.Caption = "Preparing file browser..."
-    DoEvents
+    ' Check if a sheet with that name already exists
+    hasSheetWithName = False
+    For Each existingSheet In ThisWorkbook.Sheets
+        If existingSheet.Name = newSheetName Then
+            hasSheetWithName = True
+            Exit For
+        End If
+    Next existingSheet
+    
+    If hasSheetWithName Then
+        If MsgBox("A sheet named '" & newSheetName & "' already exists. Do you want to replace it?", _
+                  vbQuestion + vbYesNo) = vbNo Then
+            Application.ScreenUpdating = True
+            Application.DisplayAlerts = True
+            Exit Sub
+        Else
+            Application.DisplayAlerts = False
+            existingSheet.Delete
+            Application.DisplayAlerts = True
+        End If
+    End If
     
     ' Create file dialog to browse for Excel file
-    Set fd = Application.FileDialog(msoFileDialogFilePicker)
+    Set fileDialog = Application.FileDialog(msoFileDialogFilePicker)
     
-    With fd
-        .Title = "Select the Excel file downloaded from SharePoint"
+    With fileDialog
+        .Title = "Select Excel File Containing 'SPECIFIC SHEET'"
         .AllowMultiSelect = False
         .Filters.Clear
-        .Filters.Add "Excel Files", "*.xlsx;*.xlsm;*.xls"
-        
-        ' Update status
-        frmProgress.lblStatus.Caption = "Waiting for file selection..."
-        DoEvents
+        .Filters.Add "Excel Files", "*.xlsx;*.xlsm;*.xls;*.xlsb"
         
         ' Show the dialog
         If .Show = 0 Then
             ' User cancelled
-            frmProgress.lblStatus.Caption = "Import cancelled"
-            Sleep 1000
-            frmProgress.Hide
+            Application.ScreenUpdating = True
+            Application.DisplayAlerts = True
             Exit Sub
         End If
         
@@ -182,85 +79,52 @@ Sub ImportFromLocalFile()
         sourceFilePath = .SelectedItems(1)
     End With
     
-    ' Update status and progress
-    frmProgress.lblStatus.Caption = "Opening source file..."
-    frmProgress.lblProgress.Caption = "10%"
-    frmProgress.progressBar.Width = 26  ' 10% of 260
-    DoEvents
-    
     ' Try to open the source file
     On Error Resume Next
     Set sourceWb = Workbooks.Open(sourceFilePath, ReadOnly:=True)
     
     If Err.Number <> 0 Or sourceWb Is Nothing Then
-        frmProgress.lblStatus.Caption = "Error opening file"
-        Sleep 2000
-        frmProgress.Hide
         MsgBox "Could not open the selected file: " & Err.Description, vbCritical
+        Application.ScreenUpdating = True
+        Application.DisplayAlerts = True
         Exit Sub
     End If
     On Error GoTo 0
-    
-    ' Update status and progress
-    frmProgress.lblStatus.Caption = "Checking for SPECIFIC SHEET..."
-    frmProgress.lblProgress.Caption = "30%"
-    frmProgress.progressBar.Width = 78  ' 30% of 260
-    DoEvents
     
     ' Check if SPECIFIC SHEET exists in the source workbook
     On Error Resume Next
     Set sourceWs = sourceWb.Sheets("SPECIFIC SHEET")
     
     If Err.Number <> 0 Or sourceWs Is Nothing Then
-        frmProgress.lblStatus.Caption = "Sheet not found"
-        Sleep 2000
-        frmProgress.Hide
         sourceWb.Close False
         MsgBox "Could not find 'SPECIFIC SHEET' in the selected file.", vbExclamation
+        Application.ScreenUpdating = True
+        Application.DisplayAlerts = True
         Exit Sub
     End If
     On Error GoTo 0
     
-    ' Update status and progress
-    frmProgress.lblStatus.Caption = "Creating new sheet..."
-    frmProgress.lblProgress.Caption = "50%"
-    frmProgress.progressBar.Width = 130  ' 50% of 260
-    DoEvents
+    ' Create a new sheet after the fourth sheet
+    Set targetWs = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(4))
     
-    ' Create a new sheet after the third sheet
-    Set ws = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(3))
-    
-    ' Try to name the sheet
+    ' Name the new sheet
     On Error Resume Next
-    ws.Name = newSheetName
+    targetWs.Name = newSheetName
     If Err.Number <> 0 Then
-        MsgBox "Could not name the sheet '" & newSheetName & "'. Using default name.", vbExclamation
+        MsgBox "Could not rename the sheet to '" & newSheetName & "'. Using default name.", vbExclamation
         Err.Clear
     End If
     On Error GoTo 0
     
-    ' Update status and progress
-    frmProgress.lblStatus.Caption = "Copying data..."
-    frmProgress.lblProgress.Caption = "70%"
-    frmProgress.progressBar.Width = 182  ' 70% of 260
-    DoEvents
+    ' Copy the content from source worksheet to target worksheet
+    sourceWs.UsedRange.Copy targetWs.Range("A1")
     
-    ' Copy everything from the source worksheet
-    sourceWs.UsedRange.Copy ws.Range("A1")
-    
-    ' Update status and progress
-    frmProgress.lblStatus.Caption = "Preserving formatting..."
-    frmProgress.lblProgress.Caption = "90%"
-    frmProgress.progressBar.Width = 234  ' 90% of 260
-    DoEvents
-    
-    ' Process the data to preserve trailing zeros
+    ' Process the data to preserve trailing zeros and other formatting
     Dim cell As Range
-    Dim strVal As String
-    
-    For Each cell In ws.UsedRange.Cells
+    For Each cell In targetWs.UsedRange.Cells
         If IsNumeric(cell.Value) Then
             ' Convert to string to check for trailing zeros
+            Dim strVal As String
             strVal = CStr(cell.Value)
             
             ' Check if it has trailing zeros
@@ -277,29 +141,12 @@ Sub ImportFromLocalFile()
     ' Close the source workbook
     sourceWb.Close SaveChanges:=False
     
-    ' Update status and progress
-    frmProgress.lblStatus.Caption = "Import complete!"
-    frmProgress.lblProgress.Caption = "100%"
-    frmProgress.progressBar.Width = 260  ' 100% of 260
-    DoEvents
-    
-    ' Give user time to see the completion
-    Sleep 1500
-    frmProgress.Hide
-    
     ' Activate the imported sheet
-    ws.Activate
+    targetWs.Activate
     
     ' Final message
-    MsgBox "Data from 'SPECIFIC SHEET' has been successfully imported to sheet '" & ws.Name & "'.", vbInformation
-End Sub
-
-Function Sleep(milliseconds As Long)
-    ' Simple delay function
-    Dim startTime As Double
-    startTime = Timer
+    MsgBox "Data from 'SPECIFIC SHEET' has been successfully imported to sheet '" & targetWs.Name & "'.", vbInformation
     
-    Do While Timer < startTime + (milliseconds / 1000)
-        DoEvents
-    Loop
-End Function
+    Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
+End Sub
