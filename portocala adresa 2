@@ -1,0 +1,158 @@
+Option Explicit
+
+Sub ImportSpecificSheet()
+    ' This macro allows user to browse for an Excel file
+    ' Copies "SPECIFIC SHEET" to a new sheet after the current last sheet
+    ' Names the new sheet based on the value in cell D7 of the Instructions sheet
+    
+    Dim sourceFilePath As String
+    Dim newSheetName As String
+    Dim instructionsSheet As Worksheet
+    Dim targetWs As Worksheet
+    Dim sourceWb As Workbook
+    Dim sourceWs As Worksheet
+    Dim fileDialog As Office.FileDialog
+    Dim hasSheetWithName As Boolean
+    Dim existingSheet As Worksheet
+    
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    
+    ' Try to find the Instructions sheet
+    On Error Resume Next
+    Set instructionsSheet = ThisWorkbook.Sheets("Instructions")
+    On Error GoTo 0
+    
+    ' Check if Instructions sheet exists
+    If instructionsSheet Is Nothing Then
+        MsgBox "Could not find the 'Instructions' sheet in this workbook.", vbExclamation
+        Application.ScreenUpdating = True
+        Application.DisplayAlerts = True
+        Exit Sub
+    End If
+    
+    ' Get the new sheet name from cell D7 of the Instructions sheet
+    newSheetName = instructionsSheet.Range("D7").Value
+    
+    ' Validate the sheet name input
+    If Len(Trim(newSheetName)) = 0 Then
+        MsgBox "Please enter a sheet name in cell D7 of the Instructions sheet!", vbExclamation
+        Application.ScreenUpdating = True
+        Application.DisplayAlerts = True
+        Exit Sub
+    End If
+    
+    ' Check if a sheet with that name already exists
+    hasSheetWithName = False
+    For Each existingSheet In ThisWorkbook.Sheets
+        If existingSheet.Name = newSheetName Then
+            hasSheetWithName = True
+            Exit For
+        End If
+    Next existingSheet
+    
+    If hasSheetWithName Then
+        If MsgBox("A sheet named '" & newSheetName & "' already exists. Do you want to replace it?", _
+                  vbQuestion + vbYesNo) = vbNo Then
+            Application.ScreenUpdating = True
+            Application.DisplayAlerts = True
+            Exit Sub
+        Else
+            Application.DisplayAlerts = False
+            existingSheet.Delete
+            Application.DisplayAlerts = True
+        End If
+    End If
+    
+    ' Create file dialog to browse for Excel file
+    Set fileDialog = Application.FileDialog(msoFileDialogFilePicker)
+    
+    With fileDialog
+        .Title = "Select Excel File Containing 'SPECIFIC SHEET'"
+        .AllowMultiSelect = False
+        .Filters.Clear
+        .Filters.Add "Excel Files", "*.xlsx;*.xlsm;*.xls;*.xlsb"
+        
+        ' Show the dialog
+        If .Show = 0 Then
+            ' User cancelled
+            Application.ScreenUpdating = True
+            Application.DisplayAlerts = True
+            Exit Sub
+        End If
+        
+        ' Get selected file path
+        sourceFilePath = .SelectedItems(1)
+    End With
+    
+    ' Try to open the source file
+    On Error Resume Next
+    Set sourceWb = Workbooks.Open(sourceFilePath, ReadOnly:=True)
+    
+    If Err.Number <> 0 Or sourceWb Is Nothing Then
+        MsgBox "Could not open the selected file: " & Err.Description, vbCritical
+        Application.ScreenUpdating = True
+        Application.DisplayAlerts = True
+        Exit Sub
+    End If
+    On Error GoTo 0
+    
+    ' Check if SPECIFIC SHEET exists in the source workbook
+    On Error Resume Next
+    Set sourceWs = sourceWb.Sheets("SPECIFIC SHEET")
+    
+    If Err.Number <> 0 Or sourceWs Is Nothing Then
+        sourceWb.Close False
+        MsgBox "Could not find 'SPECIFIC SHEET' in the selected file.", vbExclamation
+        Application.ScreenUpdating = True
+        Application.DisplayAlerts = True
+        Exit Sub
+    End If
+    On Error GoTo 0
+    
+    ' Create a new sheet after the first sheet
+    Set targetWs = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(1))
+    
+    ' Name the new sheet
+    On Error Resume Next
+    targetWs.Name = newSheetName
+    If Err.Number <> 0 Then
+        MsgBox "Could not rename the sheet to '" & newSheetName & "'. Using default name.", vbExclamation
+        Err.Clear
+    End If
+    On Error GoTo 0
+    
+    ' Copy the content from source worksheet to target worksheet
+    sourceWs.UsedRange.Copy targetWs.Range("A1")
+    
+    ' Process the data to preserve trailing zeros without converting to text format
+    Dim cell As Range
+    Dim strVal As String
+    
+    For Each cell In targetWs.UsedRange.Cells
+        If IsNumeric(cell.Value) Then
+            ' Convert to string to check for trailing zeros
+            strVal = CStr(cell.Value)
+            
+            ' Check if it has trailing zeros
+            If InStr(strVal, ".") > 0 Then
+                If Right(strVal, 1) = "0" Then
+                    ' Keep as number but add apostrophe prefix in the formula bar
+                    cell.PrefixCharacter = "'"
+                End If
+            End If
+        End If
+    Next cell
+    
+    ' Close the source workbook
+    sourceWb.Close SaveChanges:=False
+    
+    ' Activate the imported sheet
+    targetWs.Activate
+    
+    ' Final message
+    MsgBox "Data from 'SPECIFIC SHEET' has been successfully imported to sheet '" & targetWs.Name & "'.", vbInformation
+    
+    Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
+End Sub
