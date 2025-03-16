@@ -1,82 +1,110 @@
-Sub ImportSpecificSheetFromSharePoint()
-    ' This macro reads a SharePoint URL from cell D7,
-    ' imports "SPECIFIC SHEET" as text to preserve formatting and trailing zeros,
-    ' and renames the sheet based on the value in cell D10
+Sub ImportSpecificSheetUsingPowerQuery()
+    ' This macro uses M-code (Power Query) to import data from a SharePoint Excel file
+    ' It reads the URL from cell D7 of the second sheet
+    ' And imports the sheet named "SPECIFIC SHEET"
+    ' Creates a new sheet after the third sheet and names it based on cell D10 value
     
     Dim sourceUrl As String
     Dim newSheetName As String
-    Dim wb As Workbook
     Dim ws As Worksheet
+    Dim queryName As String
+    Dim mCode As String
+    
+    ' Error handling
+    On Error GoTo ErrorHandler
     
     Application.ScreenUpdating = False
     Application.DisplayAlerts = False
     
-    ' Get the URL from cell D7
-    sourceUrl = ThisWorkbook.Sheets(1).Range("D7").Value
+    ' Get the URL from cell D7 of the second sheet
+    sourceUrl = ThisWorkbook.Sheets(2).Range("D7").Value
     
-    ' Get the new sheet name from cell D10
-    newSheetName = ThisWorkbook.Sheets(1).Range("D10").Value
+    ' Get the new sheet name from cell D10 of the second sheet
+    newSheetName = ThisWorkbook.Sheets(2).Range("D10").Value
     
     ' Validate inputs
     If Len(sourceUrl) = 0 Then
-        MsgBox "Please enter a SharePoint URL in cell D7!", vbExclamation
+        MsgBox "Please enter a SharePoint URL in cell D7 of the second sheet!", vbExclamation
         Exit Sub
     End If
     
     If Len(newSheetName) = 0 Then
-        MsgBox "Please enter a sheet name in cell D10!", vbExclamation
+        MsgBox "Please enter a sheet name in cell D10 of the second sheet!", vbExclamation
         Exit Sub
     End If
     
-    ' Method 1: Try using workbooks.Open first (more direct)
-    On Error Resume Next
-    Set wb = Workbooks.Open(sourceUrl, ReadOnly:=True)
-    
-    If Not wb Is Nothing Then
-        ' We successfully opened the workbook
-        On Error Resume Next
-        Set ws = wb.Sheets("SPECIFIC SHEET")
-        
-        If Not ws Is Nothing Then
-            ' Copy the specific sheet to our workbook
-            ws.Copy After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count)
-            ' Rename the newly copied sheet
-            ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count).Name = newSheetName
-            ' Convert all cells to text format to preserve trailing zeros
-            With ThisWorkbook.Sheets(newSheetName).UsedRange
-                .NumberFormat = "@" ' Set to text format
-            End With
-            ' Close the source workbook
-            wb.Close SaveChanges:=False
-            
-            MsgBox "Sheet 'SPECIFIC SHEET' successfully imported and renamed to '" & newSheetName & "'", vbInformation
-        Else
-            wb.Close SaveChanges:=False
-            MsgBox "Could not find 'SPECIFIC SHEET' in the source workbook.", vbExclamation
-        End If
-    Else
-        ' Method 2: If direct open failed, try to use QueryTables (Power Query approach)
-        On Error GoTo ErrorHandler
-        ' Add a new worksheet
-        Set ws = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
-        ws.Name = newSheetName
-        
-        ' Create a QueryTable to get data
-        With ws.QueryTables.Add(Connection:="URL;" & sourceUrl, Destination:=ws.Range("A1"))
-            .WebSelectionType = xlSpecifiedTables
-            .WebTables = "SPECIFIC SHEET$"  ' Target the specific sheet
-            .WebFormatting = xlWebFormattingAll
-            .WebDisableDateRecognition = True
-            .WebPreFormattedTextToColumns = True
-            .Refresh BackgroundQuery:=False
-            .Delete  ' Remove the query but keep the data
-        End With
-        
-        ' Convert all cells to text format to preserve trailing zeros
-        ws.UsedRange.NumberFormat = "@"
-        
-        MsgBox "Data imported from 'SPECIFIC SHEET' and saved to sheet '" & newSheetName & "'", vbInformation
+    ' Ensure we have at least 3 sheets before adding after the third
+    If ThisWorkbook.Sheets.Count < 3 Then
+        MsgBox "This workbook needs at least 3 sheets. Please add more sheets.", vbExclamation
+        Exit Sub
     End If
+    
+    ' Create a new sheet after the third sheet
+    Set ws = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(3))
+    
+    ' Try to name the new sheet
+    On Error Resume Next
+    ws.Name = newSheetName
+    If Err.Number <> 0 Then
+        MsgBox "Could not name the new sheet to '" & newSheetName & "'. Using default name.", vbExclamation
+        Err.Clear
+    End If
+    On Error GoTo ErrorHandler
+    
+    ' Create a unique query name
+    queryName = "ImportedSharePointData_" & Format(Now, "yyyymmddhhmmss")
+    
+    ' Create M-code for Power Query
+    mCode = _
+        "let" & vbNewLine & _
+        "    Source = Excel.Workbook(Web.Contents(""" & sourceUrl & """), null, true)," & vbNewLine & _
+        "    #""SPECIFIC SHEET"" = Source{[Item=""SPECIFIC SHEET"",Kind=""Sheet""]}[Data]," & vbNewLine & _
+        "    #""Changed Type"" = Table.TransformColumnTypes(#""SPECIFIC SHEET"", {})," & vbNewLine & _
+        "    #""Converted to Text"" = Table.TransformColumnTypes(#""Changed Type"", Table.ColumnNames(#""Changed Type""), type text)" & vbNewLine & _
+        "in" & vbNewLine & _
+        "    #""Converted to Text"""
+    
+    ' Add the query to the workbook
+    With ThisWorkbook.Queries.Add(Name:=queryName, Formula:=mCode)
+        ' Create a connection to the query
+        ThisWorkbook.Connections.Add2 _
+            Name:=queryName, _
+            Description:="Connection to " & queryName, _
+            ConnectionString:="OLEDB;Provider=Microsoft.Mashup.OleDb.1;Data Source=$Workbook$;Location=" & queryName & ";Extended Properties=""""", _
+            CommandText:="SELECT * FROM [" & queryName & "]", _
+            lCmdtype:=7, _
+            CreateModelConnection:=False, _
+            ImportRelationships:=False
+    End With
+    
+    ' Add a query table to the worksheet
+    With ws.ListObjects.Add(SourceType:=0, Source:= _
+        "OLEDB;Provider=Microsoft.Mashup.OleDb.1;Data Source=$Workbook$;Location=" & _
+        queryName & ";Extended Properties=""""", Destination:=ws.Range("A1")).QueryTable
+        
+        ' Refresh the query to get the data
+        .CommandType = xlCmdSql
+        .CommandText = "SELECT * FROM [" & queryName & "]"
+        .RefreshStyle = xlOverwriteCells
+        .AdjustColumnWidth = True
+        .PreserveFormatting = True
+        .Refresh BackgroundQuery:=False
+    End With
+    
+    ' Convert numbers to text with apostrophes to preserve trailing zeros
+    Dim cell As Range
+    For Each cell In ws.UsedRange.Cells
+        If IsNumeric(cell.Value) Then
+            ' Check if it has trailing zeros
+            If InStr(cell.Value, ".") > 0 Then
+                If Right(cell.Value, 1) = "0" Then
+                    cell.Value = "'" & cell.Value
+                End If
+            End If
+        End If
+    Next cell
+    
+    MsgBox "Data from 'SPECIFIC SHEET' has been imported to a new sheet named '" & ws.Name & "'", vbInformation
     
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
