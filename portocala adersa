@@ -1,14 +1,14 @@
 Sub ImportSpecificSheetUsingPowerQuery()
-    ' This macro uses M-code (Power Query) to import data from a SharePoint Excel file
+    ' This macro imports data from a SharePoint Excel file's "SPECIFIC SHEET"
     ' It reads the URL from cell D7 of the second sheet
-    ' And imports the sheet named "SPECIFIC SHEET"
     ' Creates a new sheet after the third sheet and names it based on cell D10 value
     
     Dim sourceUrl As String
     Dim newSheetName As String
     Dim ws As Worksheet
-    Dim queryName As String
-    Dim mCode As String
+    Dim existingSheet As Worksheet
+    Dim connectionString As String
+    Dim i As Integer
     
     ' Error handling
     On Error GoTo ErrorHandler
@@ -25,19 +25,36 @@ Sub ImportSpecificSheetUsingPowerQuery()
     ' Validate inputs
     If Len(sourceUrl) = 0 Then
         MsgBox "Please enter a SharePoint URL in cell D7 of the second sheet!", vbExclamation
-        Exit Sub
+        GoTo CleanExit
     End If
     
     If Len(newSheetName) = 0 Then
         MsgBox "Please enter a sheet name in cell D10 of the second sheet!", vbExclamation
-        Exit Sub
+        GoTo CleanExit
     End If
     
     ' Ensure we have at least 3 sheets before adding after the third
     If ThisWorkbook.Sheets.Count < 3 Then
         MsgBox "This workbook needs at least 3 sheets. Please add more sheets.", vbExclamation
-        Exit Sub
+        GoTo CleanExit
     End If
+    
+    ' Check if a sheet with the new name already exists
+    For Each existingSheet In ThisWorkbook.Sheets
+        If existingSheet.Name = newSheetName Then
+            ' Ask if user wants to replace the existing sheet
+            If MsgBox("A sheet named '" & newSheetName & "' already exists. Replace it?", _
+                     vbQuestion + vbYesNo) = vbYes Then
+                Application.DisplayAlerts = False
+                existingSheet.Delete
+                Application.DisplayAlerts = True
+            Else
+                MsgBox "Operation canceled.", vbInformation
+                GoTo CleanExit
+            End If
+            Exit For
+        End If
+    Next existingSheet
     
     ' Create a new sheet after the third sheet
     Set ws = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(3))
@@ -51,67 +68,153 @@ Sub ImportSpecificSheetUsingPowerQuery()
     End If
     On Error GoTo ErrorHandler
     
-    ' Create a unique query name
-    queryName = "ImportedSharePointData_" & Format(Now, "yyyymmddhhmmss")
-    
-    ' Create M-code for Power Query
-    mCode = _
-        "let" & vbNewLine & _
-        "    Source = Excel.Workbook(Web.Contents(""" & sourceUrl & """), null, true)," & vbNewLine & _
-        "    #""SPECIFIC SHEET"" = Source{[Item=""SPECIFIC SHEET"",Kind=""Sheet""]}[Data]," & vbNewLine & _
-        "    #""Changed Type"" = Table.TransformColumnTypes(#""SPECIFIC SHEET"", {})," & vbNewLine & _
-        "    #""Converted to Text"" = Table.TransformColumnTypes(#""Changed Type"", Table.ColumnNames(#""Changed Type""), type text)" & vbNewLine & _
-        "in" & vbNewLine & _
-        "    #""Converted to Text"""
-    
-    ' Add the query to the workbook
-    With ThisWorkbook.Queries.Add(Name:=queryName, Formula:=mCode)
-        ' Create a connection to the query
-        ThisWorkbook.Connections.Add2 _
-            Name:=queryName, _
-            Description:="Connection to " & queryName, _
-            ConnectionString:="OLEDB;Provider=Microsoft.Mashup.OleDb.1;Data Source=$Workbook$;Location=" & queryName & ";Extended Properties=""""", _
-            CommandText:="SELECT * FROM [" & queryName & "]", _
-            lCmdtype:=7, _
-            CreateModelConnection:=False, _
-            ImportRelationships:=False
+    ' Use a simpler approach to import data
+    ' First add a temporary connection to Excel
+    With ActiveWorkbook.Connections.Add2( _
+        Name:="TempConnection", _
+        Description:="Connection to SharePoint Excel file", _
+        ConnectionString:="OLEDB;Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" & sourceUrl & _
+                        ";Extended Properties=""Excel 12.0 Xml;HDR=YES""", _
+        CommandText:="SELECT * FROM [SPECIFIC SHEET$]", _
+        lCmdtype:=xlCmdSql, _
+        CreateModelConnection:=False, _
+        ImportRelationships:=False)
     End With
     
-    ' Add a query table to the worksheet
-    With ws.ListObjects.Add(SourceType:=0, Source:= _
-        "OLEDB;Provider=Microsoft.Mashup.OleDb.1;Data Source=$Workbook$;Location=" & _
-        queryName & ";Extended Properties=""""", Destination:=ws.Range("A1")).QueryTable
+    ' If the above approach fails, try the alternative approach with Power Query
+    On Error Resume Next
+    
+    ' Try to refresh the connection to test if it works
+    ActiveWorkbook.Connections("TempConnection").Refresh
+    
+    If Err.Number <> 0 Then
+        ' If the simple approach fails, try the Power Query approach with web URL
+        Err.Clear
+        On Error GoTo ErrorHandler
         
-        ' Refresh the query to get the data
-        .CommandType = xlCmdSql
-        .CommandText = "SELECT * FROM [" & queryName & "]"
-        .RefreshStyle = xlOverwriteCells
-        .AdjustColumnWidth = True
-        .PreserveFormatting = True
-        .Refresh BackgroundQuery:=False
-    End With
+        ' Create a new query from web
+        With ActiveWorkbook.Queries.Add(Name:="ImportedData")
+            .Formula = _
+                "let" & vbNewLine & _
+                "    Source = Excel.Workbook(Web.Contents(""" & sourceUrl & """))," & vbNewLine & _
+                "    SheetFilter = Table.SelectRows(Source, each ([Name] = ""SPECIFIC SHEET""))," & vbNewLine & _
+                "    FirstSheet = SheetFilter{0}[Data]" & vbNewLine & _
+                "in" & vbNewLine & _
+                "    FirstSheet"
+        End With
+        
+        ' Create connection to the query
+        With ActiveWorkbook.Connections.Add2( _
+            Name:="ImportedData", _
+            Description:="Connection to SharePoint data", _
+            ConnectionString:="OLEDB;Provider=Microsoft.Mashup.OleDb.1;Data Source=$Workbook$;Location=ImportedData", _
+            CommandText:="SELECT * FROM [ImportedData]", _
+            lCmdtype:=xlCmdSql, _
+            CreateModelConnection:=False, _
+            ImportRelationships:=False)
+        End With
+        
+        ' Load the data to the worksheet
+        With ws.ListObjects.Add(SourceType:=0, Source:=ActiveWorkbook.Connections("ImportedData"), _
+                                Destination:=ws.Range("A1")).QueryTable
+            .CommandType = xlCmdSql
+            .CommandText = "SELECT * FROM [ImportedData]"
+            .RefreshStyle = xlOverwriteCells
+            .AdjustColumnWidth = True
+            .Refresh BackgroundQuery:=False
+        End With
+    Else
+        ' If the simple approach works, use it to load data
+        On Error GoTo ErrorHandler
+        
+        ' Load the data to the worksheet
+        With ws.ListObjects.Add(SourceType:=0, Source:=ActiveWorkbook.Connections("TempConnection"), _
+                                Destination:=ws.Range("A1")).QueryTable
+            .CommandType = xlCmdSql
+            .CommandText = "SELECT * FROM [SPECIFIC SHEET$]"
+            .RefreshStyle = xlOverwriteCells
+            .AdjustColumnWidth = True
+            .Refresh BackgroundQuery:=False
+        End With
+    End If
     
-    ' Convert numbers to text with apostrophes to preserve trailing zeros
-    Dim cell As Range
+    ' Process the data to preserve trailing zeros
+    Application.ScreenUpdating = False
+    
+    ' Add apostrophes to numbers that need preservation
     For Each cell In ws.UsedRange.Cells
         If IsNumeric(cell.Value) Then
+            ' Convert to string to check for trailing zeros
+            Dim strVal As String
+            strVal = CStr(cell.Value)
+            
             ' Check if it has trailing zeros
-            If InStr(cell.Value, ".") > 0 Then
-                If Right(cell.Value, 1) = "0" Then
-                    cell.Value = "'" & cell.Value
+            If InStr(strVal, ".") > 0 Then
+                If Right(strVal, 1) = "0" Then
+                    ' Add apostrophe to the value
+                    cell.NumberFormat = "@"
+                    cell.Value = "'" & strVal
                 End If
             End If
         End If
     Next cell
     
+    ' Clean up temporary connection
+    On Error Resume Next
+    ActiveWorkbook.Connections("TempConnection").Delete
+    On Error GoTo ErrorHandler
+    
     MsgBox "Data from 'SPECIFIC SHEET' has been imported to a new sheet named '" & ws.Name & "'", vbInformation
     
+CleanExit:
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
     Exit Sub
     
 ErrorHandler:
+    ' Try one more fallback approach if everything else failed
+    If Err.Number <> 0 Then
+        On Error Resume Next
+        
+        ' A simple, more compatible approach
+        Dim tempWb As Workbook
+        
+        ' Use QueryTables for web data
+        With ws.QueryTables.Add(Connection:="URL;" & sourceUrl, Destination:=ws.Range("A1"))
+            .BackgroundQuery = False
+            .TablesOnlyFromHTML = False
+            .Refresh BackgroundQuery:=False
+            .SaveData = True
+            
+            ' If query completes, look for the specific sheet data
+            If Err.Number = 0 Then
+                ' Try to find the SPECIFIC SHEET data in the imported content
+                ' This is a basic approach that might need adjustment based on the actual structure
+                Dim foundCell As Range
+                Set foundCell = ws.UsedRange.Find("SPECIFIC SHEET", LookIn:=xlValues)
+                
+                If Not foundCell Is Nothing Then
+                    ' We found the sheet name, now look for data below it
+                    ' This is simplistic and may need refinement
+                    Dim dataStart As Range
+                    Set dataStart = ws.Cells(foundCell.Row + 1, foundCell.Column)
+                    
+                    ' If we found data, keep it; otherwise message the user
+                    If Len(dataStart.Value) > 0 Then
+                        MsgBox "Data has been imported, but may require manual formatting.", vbInformation
+                    Else
+                        MsgBox "Data was imported but SPECIFIC SHEET could not be identified.", vbExclamation
+                    End If
+                End If
+            End If
+        End With
+    End If
+    
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
-    MsgBox "Error importing data: " & Err.Description, vbCritical
+    
+    If Err.Number <> 0 Then
+        MsgBox "Error importing data: " & Err.Description & vbNewLine & _
+               "Please check that the SharePoint URL is correct and accessible.", vbCritical
+    End If
 End Sub
