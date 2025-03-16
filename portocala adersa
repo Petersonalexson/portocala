@@ -1,94 +1,89 @@
-Sub ImportSharePointData()
+Sub ImportSpecificSheetFromSharePoint()
     ' This macro reads a SharePoint URL from cell D7,
-    ' imports data from "SPECIFIC SHEET" as text to preserve trailing zeros,
+    ' imports "SPECIFIC SHEET" as text to preserve formatting and trailing zeros,
     ' and renames the sheet based on the value in cell D10
     
-    Dim ws As Worksheet
-    Dim sharePointURL As String
+    Dim sourceUrl As String
     Dim newSheetName As String
-    Dim queryTable As QueryTable
-    Dim excelFileName As String
-    Dim specificSheetName As String
+    Dim wb As Workbook
+    Dim ws As Worksheet
     
-    ' Set reference to active worksheet
-    Set ws = ActiveSheet
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
     
-    ' Get SharePoint URL from cell D7
-    sharePointURL = ws.Range("D7").Value
+    ' Get the URL from cell D7
+    sourceUrl = ThisWorkbook.Sheets(1).Range("D7").Value
     
-    ' Get new sheet name from cell D10
-    newSheetName = ws.Range("D10").Value
-    
-    ' Set the specific sheet name to read from
-    specificSheetName = "SPECIFIC SHEET"
+    ' Get the new sheet name from cell D10
+    newSheetName = ThisWorkbook.Sheets(1).Range("D10").Value
     
     ' Validate inputs
-    If Len(sharePointURL) = 0 Then
-        MsgBox "SharePoint URL in cell D7 is empty!", vbExclamation
+    If Len(sourceUrl) = 0 Then
+        MsgBox "Please enter a SharePoint URL in cell D7!", vbExclamation
         Exit Sub
     End If
     
     If Len(newSheetName) = 0 Then
-        MsgBox "Sheet name in cell D10 is empty!", vbExclamation
+        MsgBox "Please enter a sheet name in cell D10!", vbExclamation
         Exit Sub
     End If
     
-    ' Create a new worksheet
-    Set ws = Worksheets.Add
-    
-    ' Create a QueryTable to import data from SharePoint
-    ' For Excel files on SharePoint, we need to use a different approach
-    ' Create a connection to the Excel file
-    Set queryTable = ws.QueryTables.Add( _
-        Connection:="URL;" & sharePointURL, _
-        Destination:=ws.Range("A1"))
-    
-    ' We'll handle the specific sheet selection after initial connection
-    
-    ' Configure QueryTable settings to import everything as text
-    With queryTable
-        .WebSelectionType = xlSpecifiedTables
-        .WebFormatting = xlWebFormattingAll
-        .WebPreFormattedTextToColumns = True
-        .WebConsecutiveDelimitersAsOne = True
-        .WebSingleBlockTextImport = False
-        .WebDisableDateRecognition = True
-        .WebDisableRedirections = False
-        
-        ' Specify which sheet to import from (for Excel files)
-        If InStr(LCase(sharePointURL), ".xlsx") > 0 Or InStr(LCase(sharePointURL), ".xlsm") > 0 Or InStr(LCase(sharePointURL), ".xls") > 0 Then
-            .WebTables = specificSheetName & "$"
-        End If
-        
-        .Refresh BackgroundQuery:=False
-        
-        ' Set all columns to text format to preserve trailing zeros
-        For i = 1 To .ResultRange.Columns.Count
-            .ResultRange.Columns(i).TextToColumns _
-                Destination:=.ResultRange.Columns(i).Cells(1), _
-                DataType:=xlDelimited, _
-                TextQualifier:=xlDoubleQuote, _
-                ConsecutiveDelimiter:=False, _
-                Tab:=True, _
-                Semicolon:=False, _
-                Comma:=False, _
-                Space:=False, _
-                Other:=False, _
-                FieldInfo:=Array(1, 2)  ' Force all columns to be imported as text
-        Next i
-    End With
-    
-    ' Delete the QueryTable but keep the data
-    queryTable.Delete
-    
-    ' Rename the worksheet
+    ' Method 1: Try using workbooks.Open first (more direct)
     On Error Resume Next
-    ws.Name = newSheetName
-    If Err.Number <> 0 Then
-        MsgBox "Could not rename sheet to '" & newSheetName & "'. " & _
-               "Name may be invalid or already in use.", vbExclamation
-    End If
-    On Error GoTo 0
+    Set wb = Workbooks.Open(sourceUrl, ReadOnly:=True)
     
-    MsgBox "Data imported from SharePoint and sheet renamed to '" & ws.Name & "'", vbInformation
+    If Not wb Is Nothing Then
+        ' We successfully opened the workbook
+        On Error Resume Next
+        Set ws = wb.Sheets("SPECIFIC SHEET")
+        
+        If Not ws Is Nothing Then
+            ' Copy the specific sheet to our workbook
+            ws.Copy After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count)
+            ' Rename the newly copied sheet
+            ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count).Name = newSheetName
+            ' Convert all cells to text format to preserve trailing zeros
+            With ThisWorkbook.Sheets(newSheetName).UsedRange
+                .NumberFormat = "@" ' Set to text format
+            End With
+            ' Close the source workbook
+            wb.Close SaveChanges:=False
+            
+            MsgBox "Sheet 'SPECIFIC SHEET' successfully imported and renamed to '" & newSheetName & "'", vbInformation
+        Else
+            wb.Close SaveChanges:=False
+            MsgBox "Could not find 'SPECIFIC SHEET' in the source workbook.", vbExclamation
+        End If
+    Else
+        ' Method 2: If direct open failed, try to use QueryTables (Power Query approach)
+        On Error GoTo ErrorHandler
+        ' Add a new worksheet
+        Set ws = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
+        ws.Name = newSheetName
+        
+        ' Create a QueryTable to get data
+        With ws.QueryTables.Add(Connection:="URL;" & sourceUrl, Destination:=ws.Range("A1"))
+            .WebSelectionType = xlSpecifiedTables
+            .WebTables = "SPECIFIC SHEET$"  ' Target the specific sheet
+            .WebFormatting = xlWebFormattingAll
+            .WebDisableDateRecognition = True
+            .WebPreFormattedTextToColumns = True
+            .Refresh BackgroundQuery:=False
+            .Delete  ' Remove the query but keep the data
+        End With
+        
+        ' Convert all cells to text format to preserve trailing zeros
+        ws.UsedRange.NumberFormat = "@"
+        
+        MsgBox "Data imported from 'SPECIFIC SHEET' and saved to sheet '" & newSheetName & "'", vbInformation
+    End If
+    
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+    Exit Sub
+    
+ErrorHandler:
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+    MsgBox "Error importing data: " & Err.Description, vbCritical
 End Sub
