@@ -1,88 +1,266 @@
-Sub ImportFromSharePointOnline()
-    ' This macro is designed for SharePoint Online files without linked connections
-    ' It uses a browser download approach to access the "SPECIFIC SHEET"
-    ' Reads URL from cell D7 of sheet 2 and names the new sheet from cell D10
+Option Explicit
+
+' Create a UserForm for progress display
+Sub ShowImportForm()
+    ' Check if the form already exists
+    Dim frm As Object
+    On Error Resume Next
+    Set frm = UserForms.Item("ImportProgressForm")
+    On Error GoTo 0
     
-    Dim sharePointURL As String
+    ' If form doesn't exist, create it
+    If frm Is Nothing Then
+        CreateImportProgressForm
+    End If
+    
+    ' Show the form
+    UserForms.Item("ImportProgressForm").Show
+End Sub
+
+Sub CreateImportProgressForm()
+    ' Create a progress form programmatically
+    Dim VBProj As Object
+    Dim VBComp As Object
+    Dim frm As Object
+    Dim lblStatus As Object
+    Dim lblProgress As Object
+    Dim progressBar As Object
+    Dim btnCancel As Object
+    
+    ' Reference the VBA project
+    Set VBProj = ThisWorkbook.VBProject
+    
+    ' Add a UserForm
+    Set VBComp = VBProj.VBComponents.Add(3) ' 3 = vbext_ct_MSForm
+    VBComp.Name = "ImportProgressForm"
+    Set frm = VBComp.Designer
+    
+    ' Set form properties
+    frm.Caption = "Import Progress"
+    frm.Width = 300
+    frm.Height = 150
+    
+    ' Add status label
+    Set lblStatus = frm.Controls.Add("Forms.Label.1", "lblStatus", True)
+    With lblStatus
+        .Caption = "Ready to import..."
+        .Left = 20
+        .Top = 20
+        .Width = 260
+        .Height = 20
+    End With
+    
+    ' Add progress label
+    Set lblProgress = frm.Controls.Add("Forms.Label.1", "lblProgress", True)
+    With lblProgress
+        .Caption = "0%"
+        .Left = 20
+        .Top = 50
+        .Width = 260
+        .Height = 20
+    End With
+    
+    ' Add progress bar (using a frame as a makeshift progress bar)
+    Set progressBar = frm.Controls.Add("Forms.Frame.1", "progressBar", True)
+    With progressBar
+        .Left = 20
+        .Top = 75
+        .Width = 0  ' Initially 0 width
+        .Height = 15
+        .BackColor = &H00FF00  ' Green
+        .SpecialEffect = 0     ' Flat appearance
+    End With
+    
+    ' Add background frame for progress bar
+    Dim progressBg As Object
+    Set progressBg = frm.Controls.Add("Forms.Frame.1", "progressBg", True)
+    With progressBg
+        .Left = 20
+        .Top = 75
+        .Width = 260
+        .Height = 15
+        .BackColor = &HE0E0E0  ' Light gray
+        .SpecialEffect = 0     ' Flat appearance
+    End With
+    
+    ' Ensure the progress bar is above the background
+    progressBar.ZOrder (0)
+    
+    ' Add a cancel button
+    Set btnCancel = frm.Controls.Add("Forms.CommandButton.1", "btnCancel", True)
+    With btnCancel
+        .Caption = "Cancel"
+        .Left = 110
+        .Top = 100
+        .Width = 80
+        .Height = 30
+    End With
+    
+    ' Add the UserInitialize event for initialization
+    Dim codeModule As Object
+    Set codeModule = VBComp.CodeModule
+    
+    ' Add code to the form
+    Dim codeText As String
+    codeText = _
+        "Private Sub UserForm_Initialize()" & vbNewLine & _
+        "    Call ImportFromLocalFile" & vbNewLine & _
+        "End Sub" & vbNewLine & vbNewLine & _
+        "Private Sub btnCancel_Click()" & vbNewLine & _
+        "    Tag = ""Cancelled""" & vbNewLine & _
+        "    Me.Hide" & vbNewLine & _
+        "End Sub"
+    
+    codeModule.AddFromString codeText
+End Sub
+
+Sub ImportFromLocalFile()
+    ' This macro allows user to browse for a downloaded Excel file
+    ' and imports "SPECIFIC SHEET" with progress indicators
+    
+    Dim sourceFilePath As String
     Dim newSheetName As String
     Dim ws As Worksheet
-    Dim ie As Object
+    Dim sourceWb As Workbook
+    Dim sourceWs As Worksheet
+    Dim fd As Object
+    Dim frmProgress As Object
+    Dim progressMax As Long
+    Dim progressCurrent As Long
     
-    ' Error handling
-    On Error GoTo ErrorHandler
-    
-    Application.ScreenUpdating = False
-    Application.DisplayAlerts = False
-    
-    ' Get the SharePoint URL from cell D7 of sheet 2
-    sharePointURL = ThisWorkbook.Sheets(2).Range("D7").Value
+    ' Get the progress form reference
+    Set frmProgress = UserForms.Item("ImportProgressForm")
     
     ' Get the new sheet name from cell D10 of sheet 2
     newSheetName = ThisWorkbook.Sheets(2).Range("D10").Value
     
-    ' Validate inputs
-    If Len(sharePointURL) = 0 Then
-        MsgBox "Please enter a SharePoint URL in cell D7 of the second sheet!", vbExclamation
-        GoTo CleanExit
+    ' Validate input
+    If Len(newSheetName) = 0 Then
+        frmProgress.lblStatus.Caption = "Error: No sheet name provided in D10"
+        Sleep 2000
+        frmProgress.Hide
+        MsgBox "Please enter a sheet name in cell D10 of the second sheet!", vbExclamation
+        Exit Sub
     End If
     
-    If Len(newSheetName) = 0 Then
-        MsgBox "Please enter a sheet name in cell D10 of the second sheet!", vbExclamation
-        GoTo CleanExit
+    ' Check if we have at least 3 sheets
+    If ThisWorkbook.Sheets.Count < 3 Then
+        frmProgress.lblStatus.Caption = "Error: Not enough sheets"
+        Sleep 2000
+        frmProgress.Hide
+        MsgBox "This workbook needs at least 3 sheets. Please add more sheets.", vbExclamation
+        Exit Sub
     End If
+    
+    ' Update status
+    frmProgress.lblStatus.Caption = "Preparing file browser..."
+    DoEvents
+    
+    ' Create file dialog to browse for Excel file
+    Set fd = Application.FileDialog(msoFileDialogFilePicker)
+    
+    With fd
+        .Title = "Select the Excel file downloaded from SharePoint"
+        .AllowMultiSelect = False
+        .Filters.Clear
+        .Filters.Add "Excel Files", "*.xlsx;*.xlsm;*.xls"
+        
+        ' Update status
+        frmProgress.lblStatus.Caption = "Waiting for file selection..."
+        DoEvents
+        
+        ' Show the dialog
+        If .Show = 0 Then
+            ' User cancelled
+            frmProgress.lblStatus.Caption = "Import cancelled"
+            Sleep 1000
+            frmProgress.Hide
+            Exit Sub
+        End If
+        
+        ' Get selected file path
+        sourceFilePath = .SelectedItems(1)
+    End With
+    
+    ' Update status and progress
+    frmProgress.lblStatus.Caption = "Opening source file..."
+    frmProgress.lblProgress.Caption = "10%"
+    frmProgress.progressBar.Width = 26  ' 10% of 260
+    DoEvents
+    
+    ' Try to open the source file
+    On Error Resume Next
+    Set sourceWb = Workbooks.Open(sourceFilePath, ReadOnly:=True)
+    
+    If Err.Number <> 0 Or sourceWb Is Nothing Then
+        frmProgress.lblStatus.Caption = "Error opening file"
+        Sleep 2000
+        frmProgress.Hide
+        MsgBox "Could not open the selected file: " & Err.Description, vbCritical
+        Exit Sub
+    End If
+    On Error GoTo 0
+    
+    ' Update status and progress
+    frmProgress.lblStatus.Caption = "Checking for SPECIFIC SHEET..."
+    frmProgress.lblProgress.Caption = "30%"
+    frmProgress.progressBar.Width = 78  ' 30% of 260
+    DoEvents
+    
+    ' Check if SPECIFIC SHEET exists in the source workbook
+    On Error Resume Next
+    Set sourceWs = sourceWb.Sheets("SPECIFIC SHEET")
+    
+    If Err.Number <> 0 Or sourceWs Is Nothing Then
+        frmProgress.lblStatus.Caption = "Sheet not found"
+        Sleep 2000
+        frmProgress.Hide
+        sourceWb.Close False
+        MsgBox "Could not find 'SPECIFIC SHEET' in the selected file.", vbExclamation
+        Exit Sub
+    End If
+    On Error GoTo 0
+    
+    ' Update status and progress
+    frmProgress.lblStatus.Caption = "Creating new sheet..."
+    frmProgress.lblProgress.Caption = "50%"
+    frmProgress.progressBar.Width = 130  ' 50% of 260
+    DoEvents
     
     ' Create a new sheet after the third sheet
     Set ws = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(3))
+    
+    ' Try to name the sheet
+    On Error Resume Next
     ws.Name = newSheetName
+    If Err.Number <> 0 Then
+        MsgBox "Could not name the sheet '" & newSheetName & "'. Using default name.", vbExclamation
+        Err.Clear
+    End If
+    On Error GoTo 0
     
-    ' Create a web query - most compatible approach for SharePoint Online
-    With ws.QueryTables.Add(Connection:="URL;" & sharePointURL, Destination:=ws.Range("A1"))
-        .WebSelectionType = xlSpecifiedTables
-        .WebFormatting = xlWebFormattingAll
-        .WebTables = "SPECIFIC SHEET"  ' Target sheet name
-        .WebPreFormattedTextToColumns = True
-        .WebConsecutiveDelimitersAsOne = False
-        .WebSingleBlockTextImport = False
-        .WebDisableDateRecognition = True
-        .AdjustColumnWidth = True
-        
-        ' Use a timeout of 60 seconds
-        .WebQueryRefreshTimeout = 60
-        
-        ' Try to refresh in the background first
-        On Error Resume Next
-        .BackgroundQuery = True
-        .Refresh
-        
-        ' Wait a moment for background refresh to start
-        Application.Wait Now + TimeValue("00:00:02")
-        
-        ' If that fails, try a foreground refresh
-        If Err.Number <> 0 Then
-            Err.Clear
-            .BackgroundQuery = False
-            .Refresh
-        End If
-        
-        On Error GoTo ErrorHandler
-    End With
+    ' Update status and progress
+    frmProgress.lblStatus.Caption = "Copying data..."
+    frmProgress.lblProgress.Caption = "70%"
+    frmProgress.progressBar.Width = 182  ' 70% of 260
+    DoEvents
     
-    ' Display message to user about manual authentication
-    MsgBox "If prompted, please sign in to your SharePoint account in the browser window that opens.", vbInformation
+    ' Copy everything from the source worksheet
+    sourceWs.UsedRange.Copy ws.Range("A1")
+    
+    ' Update status and progress
+    frmProgress.lblStatus.Caption = "Preserving formatting..."
+    frmProgress.lblProgress.Caption = "90%"
+    frmProgress.progressBar.Width = 234  ' 90% of 260
+    DoEvents
     
     ' Process the data to preserve trailing zeros
-    Application.ScreenUpdating = False
-    Application.Calculation = xlCalculationManual
-    
-    ' Wait for data to load
-    Application.Wait Now + TimeValue("00:00:03")
-    
-    ' Add apostrophes to numbers that need preservation
     Dim cell As Range
+    Dim strVal As String
+    
     For Each cell In ws.UsedRange.Cells
         If IsNumeric(cell.Value) Then
             ' Convert to string to check for trailing zeros
-            Dim strVal As String
             strVal = CStr(cell.Value)
             
             ' Check if it has trailing zeros
@@ -96,33 +274,32 @@ Sub ImportFromSharePointOnline()
         End If
     Next cell
     
-    ' If we didn't get any data, provide user with manual options
-    If ws.UsedRange.Rows.Count <= 1 And ws.UsedRange.Columns.Count <= 1 Then
-        MsgBox "Automatic import may not have worked. Please try these steps:" & vbNewLine & _
-               "1. Open the SharePoint file in your browser" & vbNewLine & _
-               "2. Download the Excel file" & vbNewLine & _
-               "3. Open the downloaded file" & vbNewLine & _
-               "4. Copy the 'SPECIFIC SHEET' to this workbook", vbInformation
-    Else
-        MsgBox "Data has been imported to sheet '" & newSheetName & "'.", vbInformation
-    End If
+    ' Close the source workbook
+    sourceWb.Close SaveChanges:=False
     
-CleanExit:
-    Application.DisplayAlerts = True
-    Application.ScreenUpdating = True
-    Application.Calculation = xlCalculationAutomatic
-    Exit Sub
+    ' Update status and progress
+    frmProgress.lblStatus.Caption = "Import complete!"
+    frmProgress.lblProgress.Caption = "100%"
+    frmProgress.progressBar.Width = 260  ' 100% of 260
+    DoEvents
     
-ErrorHandler:
-    Application.DisplayAlerts = True
-    Application.ScreenUpdating = True
-    Application.Calculation = xlCalculationAutomatic
+    ' Give user time to see the completion
+    Sleep 1500
+    frmProgress.Hide
     
-    ' Provide specific guidance for SharePoint Online connection issues
-    MsgBox "Error importing data: " & Err.Description & vbNewLine & vbNewLine & _
-           "Since you're using SharePoint Online without a linked connection:" & vbNewLine & _
-           "1. Open the SharePoint file in your browser" & vbNewLine & _
-           "2. Download the Excel file" & vbNewLine & _
-           "3. Open the downloaded file" & vbNewLine & _
-           "4. Copy the 'SPECIFIC SHEET' to this workbook", vbExclamation
+    ' Activate the imported sheet
+    ws.Activate
+    
+    ' Final message
+    MsgBox "Data from 'SPECIFIC SHEET' has been successfully imported to sheet '" & ws.Name & "'.", vbInformation
 End Sub
+
+Function Sleep(milliseconds As Long)
+    ' Simple delay function
+    Dim startTime As Double
+    startTime = Timer
+    
+    Do While Timer < startTime + (milliseconds / 1000)
+        DoEvents
+    Loop
+End Function
