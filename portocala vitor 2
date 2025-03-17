@@ -393,6 +393,7 @@ End Function
 Function GetColumnNumberFromReference(ref As String) As Long
     Dim colLetter As String
     Dim i As Long
+    Dim result As Long
     
     ' Extract just the column letter(s) from the reference
     colLetter = ""
@@ -404,11 +405,14 @@ Function GetColumnNumberFromReference(ref As String) As Long
         End If
     Next i
     
-    ' Convert column letter to number
-    GetColumnNumberFromReference = 0
+    ' Convert column letter to number using a safer approach
+    result = 0
     For i = 1 To Len(colLetter)
-        GetColumnNumberFromReference = GetColumnNumberFromReference * 26 + Asc(UCase(Mid(colLetter, i, 1))) - 64
+        result = result * 26
+        result = result + (Asc(UCase(Mid(colLetter, i, 1))) - 64)
     Next i
+    
+    GetColumnNumberFromReference = result
 End Function
 
 ' Helper function to format a column range as numbers
