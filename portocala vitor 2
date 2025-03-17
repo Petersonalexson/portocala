@@ -231,15 +231,26 @@ Sub PopulateForecastTables()
     
     For i = 2 To lastRow ' Starting from row 2 assuming row 1 has headers
         ' Get values from SPECIFIC SHEET
-        natAccount = specificSheet.Cells(i, 3).Value ' Nat Accounts in column C
-        cc = specificSheet.Cells(i, 5).Value ' CC in column E
+        natAccount = CStr(specificSheet.Cells(i, 3).Value) ' Nat Accounts in column C
+        cc = CStr(specificSheet.Cells(i, 5).Value) ' CC in column E
         
         ' Check if the amount cell has a value
-        If IsNumeric(specificSheet.Cells(i, 15).Value) Then
-            amount = specificSheet.Cells(i, 15).Value ' Amounts in column O
-        Else
-            amount = 0 ' Default to 0 if not numeric
+        On Error Resume Next
+        amount = 0 ' Default to 0
+        If Not IsEmpty(specificSheet.Cells(i, 15).Value) Then
+            If IsNumeric(specificSheet.Cells(i, 15).Value) Then
+                amount = CDbl(specificSheet.Cells(i, 15).Value) ' Amounts in column O
+            Else
+                ' Try to convert to number if possible
+                Dim tempAmount As String
+                tempAmount = CStr(specificSheet.Cells(i, 15).Value)
+                tempAmount = Replace(tempAmount, ",", ".")
+                If IsNumeric(tempAmount) Then
+                    amount = CDbl(tempAmount)
+                End If
+            End If
         End If
+        On Error GoTo 0
         
         ' Skip if any essential value is missing
         If Len(Trim(natAccount)) = 0 Or Len(Trim(cc)) = 0 Then
@@ -253,11 +264,13 @@ Sub PopulateForecastTables()
         mappingLastRow = accountMappingSheet.Cells(accountMappingSheet.Rows.Count, "B").End(xlUp).Row
         
         For j = 2 To mappingLastRow ' Assuming row 1 has headers
-            If CStr(accountMappingSheet.Cells(j, 2).Value) = CStr(natAccount) Then ' Column B has Account numbers
-                desc2 = accountMappingSheet.Cells(j, 4).Value ' Column D has Description 2
+            On Error Resume Next
+            If CStr(accountMappingSheet.Cells(j, 2).Value) = natAccount Then ' Column B has Account numbers
+                desc2 = CStr(accountMappingSheet.Cells(j, 4).Value) ' Column D has Description 2
                 mappingsFound = mappingsFound + 1
                 Exit For
             End If
+            On Error GoTo 0
         Next j
         
         If Len(Trim(desc2)) = 0 Then
@@ -268,13 +281,15 @@ Sub PopulateForecastTables()
         End If
         
         ' Map Description 2 to the format used in Forecast sheet
+        On Error Resume Next
         If desc2Mappings.Exists(CStr(desc2)) Then
-            mappedDesc2 = desc2Mappings(CStr(desc2))
+            mappedDesc2 = CStr(desc2Mappings(CStr(desc2)))
         Else
             ' If no mapping found, use the original
             mappedDesc2 = desc2
             Log Now(), "No Desc2 Mapping", "No mapping found for Description 2: " & desc2 & ". Using as-is.", "Warning", logSheet, logRow
         End If
+        On Error GoTo 0
         
         ' Create a unique key for this CC and mapped Description 2 combination
         dictKey = cc & "|" & mappedDesc2
@@ -334,8 +349,14 @@ NextDataRow:
     
     ' Loop through each unique CC and Description 2 combination
     For i = 0 To dataDict.Count - 1
+        On Error Resume Next
         ' Split the dictionary key back into CC and Description 2
         parts = Split(dictKeys(i), "|")
+        If UBound(parts) < 1 Then
+            Log Now(), "Error", "Invalid dictionary key format: " & dictKeys(i), "Warning", logSheet, logRow
+            GoTo NextCombination
+        End If
+        
         currentCC = parts(0)
         currentDesc2 = parts(1)
         amount = dataDict(dictKeys(i))
@@ -354,7 +375,7 @@ NextDataRow:
         ccFound = False
         
         For j = 0 To UBound(ccPositions)
-            If CStr(forecastSheet.Cells(ccPositions(j), 3).Value) = CStr(currentCC) Then
+            If CStr(forecastSheet.Cells(ccPositions(j), 3).Value) = currentCC Then
                 ccFound = True
                 
                 ' Now find where to put the value for this desc2
@@ -370,7 +391,7 @@ NextDataRow:
                 End If
                 
                 For k = ccPositions(j) + 1 To searchEndRow
-                    If CStr(forecastSheet.Cells(k, 3).Value) = CStr(currentDesc2) Then
+                    If CStr(forecastSheet.Cells(k, 3).Value) = currentDesc2 Then
                         descFound = True
                         ccDescFound = ccDescFound + 1
                         
@@ -399,6 +420,7 @@ NextDataRow:
             ' Log missing CC
             Log Now(), "Missing CC", "Could not find CC '" & currentCC & "' in Forecast sheet", "Warning", logSheet, logRow
         End If
+        On Error GoTo 0
         
 NextCombination:
     Next i
