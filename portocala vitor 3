@@ -1,0 +1,539 @@
+Option Explicit
+
+Sub PopulateForecastTables()
+    ' This macro populates tables in the Forecast sheet based on data from imported sheet
+    ' It aggregates by Period (A1), CC, and Description 2, then populates columns to the right of CC
+    
+    Dim specificSheet As Worksheet
+    Dim accountMappingSheet As Worksheet
+    Dim refMappingSheet As Worksheet
+    Dim forecastSheet As Worksheet
+    Dim logSheet As Worksheet
+    Dim instructionsSheet As Worksheet
+    Dim i As Long, j As Long, k As Long
+    Dim ccPositions As Variant
+    Dim specificSheetName As String
+    Dim logRow As Long
+    
+    ' For data aggregation
+    Dim dataDict As Object
+    Dim dictKey As String
+    Dim natAccount As String, cc As String, desc2 As String
+    Dim amount As Double
+    
+    ' For period mapping
+    Dim periodMappings As Object
+    Dim periodFromA1 As String
+    Dim targetPeriodFormat As String
+    Dim ccPeriodColumns As Object
+    
+    ' For description 2 mapping
+    Dim desc2Mappings As Object
+    
+    ' Initialize dictionaries
+    Set dataDict = CreateObject("Scripting.Dictionary")
+    Set periodMappings = CreateObject("Scripting.Dictionary")
+    Set ccPeriodColumns = CreateObject("Scripting.Dictionary")
+    Set desc2Mappings = CreateObject("Scripting.Dictionary")
+    
+    ' Initialize the CC positions in the Forecast sheet
+    ccPositions = Array(6, 22, 38, 54, 70)
+    
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    Application.Calculation = xlCalculationManual
+    
+    ' Create log sheet if it doesn't exist
+    On Error Resume Next
+    Set logSheet = ThisWorkbook.Sheets("ProcessLog")
+    If logSheet Is Nothing Then
+        Set logSheet = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
+        logSheet.Name = "ProcessLog"
+        
+        ' Add headers to log sheet
+        logSheet.Cells(1, 1).Value = "Timestamp"
+        logSheet.Cells(1, 2).Value = "Action"
+        logSheet.Cells(1, 3).Value = "Details"
+        logSheet.Cells(1, 4).Value = "Result"
+    End If
+    On Error GoTo 0
+    
+    ' Start logging
+    logRow = logSheet.Cells(logSheet.Rows.Count, 1).End(xlUp).Row + 1
+    AddLog Now(), "Process Start", "Starting population of Forecast tables", "Info", logSheet, logRow
+    
+    ' Get the imported sheet name from Instructions D7
+    On Error Resume Next
+    Set instructionsSheet = ThisWorkbook.Sheets("Instructions")
+    On Error GoTo 0
+    
+    If instructionsSheet Is Nothing Then
+        AddLog Now(), "Error", "Could not find Instructions sheet", "Error", logSheet, logRow
+        MsgBox "Could not find Instructions sheet", vbExclamation
+        GoTo CleanupAndExit
+    End If
+    
+    specificSheetName = instructionsSheet.Range("D7").Value
+    
+    If specificSheetName = "" Then
+        AddLog Now(), "Error", "Missing sheet name in Instructions cell D7", "Error", logSheet, logRow
+        MsgBox "Missing sheet name in Instructions cell D7", vbExclamation
+        GoTo CleanupAndExit
+    End If
+    
+    AddLog Now(), "Sheet Identified", "Using sheet: " & specificSheetName, "Success", logSheet, logRow
+    
+    ' Find required sheets
+    On Error Resume Next
+    Set specificSheet = ThisWorkbook.Sheets(specificSheetName)
+    Set accountMappingSheet = ThisWorkbook.Sheets("Account Mapping")
+    Set refMappingSheet = ThisWorkbook.Sheets("Reference mapping")
+    Set forecastSheet = ThisWorkbook.Sheets("Forecast")
+    On Error GoTo 0
+    
+    ' Verify all required sheets exist
+    If specificSheet Is Nothing Then
+        AddLog Now(), "Error", "Could not find sheet: " & specificSheetName, "Error", logSheet, logRow
+        MsgBox "Could not find sheet: " & specificSheetName, vbExclamation
+        GoTo CleanupAndExit
+    End If
+    
+    If accountMappingSheet Is Nothing Then
+        AddLog Now(), "Error", "Could not find Account Mapping sheet", "Error", logSheet, logRow
+        MsgBox "Could not find Account Mapping sheet", vbExclamation
+        GoTo CleanupAndExit
+    End If
+    
+    If refMappingSheet Is Nothing Then
+        AddLog Now(), "Error", "Could not find Reference mapping sheet", "Error", logSheet, logRow
+        MsgBox "Could not find Reference mapping sheet", vbExclamation
+        GoTo CleanupAndExit
+    End If
+    
+    If forecastSheet Is Nothing Then
+        AddLog Now(), "Error", "Could not find Forecast sheet", "Error", logSheet, logRow
+        MsgBox "Could not find Forecast sheet", vbExclamation
+        GoTo CleanupAndExit
+    End If
+    
+    AddLog Now(), "Sheets Verified", "All required sheets found", "Success", logSheet, logRow
+    
+    ' Read period value from cell A1 in specific sheet to aggregate by
+    periodFromA1 = specificSheet.Range("A1").Value
+    
+    If periodFromA1 = "" Then
+        AddLog Now(), "Error", "Missing period value in " & specificSheetName & " cell A1", "Error", logSheet, logRow
+        MsgBox "Missing period value in " & specificSheetName & " cell A1", vbExclamation
+        GoTo CleanupAndExit
+    End If
+    
+    AddLog Now(), "Period Identified", "Using period from A1: " & periodFromA1, "Info", logSheet, logRow
+    
+    ' Load period mappings from Reference mapping (F to C columns)
+    AddLog Now(), "Period Mapping", "Loading period mappings (F->C)", "Info", logSheet, logRow
+    
+    Dim currentRow As Long
+    Dim blankRowCount As Long
+    
+    currentRow = 2  ' Start from row 2 (assuming row 1 has headers)
+    blankRowCount = 0
+    
+    ' Load period mappings from F to C columns, stopping after 3 blank rows
+    Do While blankRowCount < 3
+        Dim fromPeriod As String, toPeriod As String
+        
+        fromPeriod = Trim(CStr(refMappingSheet.Cells(currentRow, "F").Value))
+        toPeriod = Trim(CStr(refMappingSheet.Cells(currentRow, "C").Value))
+        
+        If fromPeriod = "" And toPeriod = "" Then
+            blankRowCount = blankRowCount + 1
+        Else
+            blankRowCount = 0  ' Reset blank row counter
+            
+            If fromPeriod <> "" And toPeriod <> "" Then
+                ' Add mapping
+                If Not periodMappings.Exists(fromPeriod) Then
+                    periodMappings.Add fromPeriod, toPeriod
+                    AddLog Now(), "Period Mapping Added", "From '" & fromPeriod & "' to '" & toPeriod & "'", "Info", logSheet, logRow
+                End If
+            End If
+        End If
+        
+        currentRow = currentRow + 1
+    Loop
+    
+    ' Map the period in A1 to the forecast format
+    targetPeriodFormat = periodFromA1  ' Default to use as-is
+    
+    If periodMappings.Exists(periodFromA1) Then
+        targetPeriodFormat = periodMappings(periodFromA1)
+        AddLog Now(), "Period Mapped", "Mapped '" & periodFromA1 & "' to '" & targetPeriodFormat & "'", "Success", logSheet, logRow
+    Else
+        AddLog Now(), "Period Not Mapped", "No mapping found for period '" & periodFromA1 & "', using as-is", "Warning", logSheet, logRow
+    End If
+    
+    ' Load Description 2 mappings from Reference mapping (H to I columns)
+    AddLog Now(), "Description 2 Mapping", "Loading Description 2 mappings (H->I)", "Info", logSheet, logRow
+    
+    currentRow = 2  ' Start from row 2 (assuming row 1 has headers)
+    blankRowCount = 0
+    
+    ' Load Description 2 mappings from H to I columns, stopping after 3 blank rows
+    Do While blankRowCount < 3
+        Dim fromDesc2 As String, toDesc2 As String
+        
+        fromDesc2 = Trim(CStr(refMappingSheet.Cells(currentRow, "H").Value))
+        toDesc2 = Trim(CStr(refMappingSheet.Cells(currentRow, "I").Value))
+        
+        If fromDesc2 = "" And toDesc2 = "" Then
+            blankRowCount = blankRowCount + 1
+        Else
+            blankRowCount = 0  ' Reset blank row counter
+            
+            If fromDesc2 <> "" And toDesc2 <> "" Then
+                ' Add mapping
+                If Not desc2Mappings.Exists(fromDesc2) Then
+                    desc2Mappings.Add fromDesc2, toDesc2
+                    AddLog Now(), "Description 2 Mapping Added", "From '" & fromDesc2 & "' to '" & toDesc2 & "'", "Info", logSheet, logRow
+                End If
+            End If
+        End If
+        
+        currentRow = currentRow + 1
+    Loop
+    
+    ' Find the period column for each CC in the Forecast sheet
+    For i = 0 To UBound(ccPositions)
+        Dim ccRow As Long
+        Dim ccValue As String
+        
+        ccRow = ccPositions(i)
+        ccValue = CStr(forecastSheet.Cells(ccRow, 3).Value)
+        
+        AddLog Now(), "Scanning CC", "Checking CC: " & ccValue & " for period: " & targetPeriodFormat, "Info", logSheet, logRow
+        
+        ' Scan columns to the right of CC to find the target period
+        Dim periodFound As Boolean
+        periodFound = False
+        blankRowCount = 0
+        
+        For j = 4 To 100  ' Start at column D (4) and look right up to 100 columns
+            Dim headerValue As String
+            headerValue = CStr(forecastSheet.Cells(ccRow, j).Value)
+            
+            ' Check for blank cells
+            If Trim(headerValue) = "" Then
+                blankRowCount = blankRowCount + 1
+                
+                ' Stop after 3 consecutive blanks
+                If blankRowCount >= 3 Then
+                    AddLog Now(), "End of Headers", "Found 3 consecutive blank cells for CC: " & ccValue, "Info", logSheet, logRow
+                    Exit For
+                End If
+            Else
+                blankRowCount = 0  ' Reset counter
+                
+                ' Log non-empty headers found
+                AddLog Now(), "Header Found", "CC: " & ccValue & ", Column " & j & ": " & headerValue, "Debug", logSheet, logRow
+                
+                ' Check if this is our target period
+                If headerValue = targetPeriodFormat Then
+                    ' Found the period column for this CC
+                    ccPeriodColumns.Add ccValue, j
+                    AddLog Now(), "Period Column Found", "For CC: " & ccValue & ", period '" & targetPeriodFormat & "' is in column " & j, "Success", logSheet, logRow
+                    periodFound = True
+                    Exit For
+                End If
+            End If
+        Next j
+        
+        ' If period not found for this CC, log warning and set default
+        If Not periodFound Then
+            AddLog Now(), "Period Not Found", "Could not find period '" & targetPeriodFormat & "' for CC: " & ccValue, "Warning", logSheet, logRow
+            
+            ' Default to column D (4)
+            ccPeriodColumns.Add ccValue, 4
+        End If
+    Next i
+    
+    ' Process SPECIFIC SHEET data to aggregate by Period, CC, and Description 2
+    Dim lastRow As Long
+    lastRow = specificSheet.Cells(specificSheet.Rows.Count, "A").End(xlUp).Row
+    
+    AddLog Now(), "Data Processing", "Processing " & (lastRow - 1) & " data rows from " & specificSheetName, "Info", logSheet, logRow
+    
+    Dim rowsProcessed As Long, rowsSkipped As Long, mappingsFound As Long
+    rowsProcessed = 0
+    rowsSkipped = 0
+    mappingsFound = 0
+    
+    ' Aggregate amounts by CC and Description 2
+    For i = 2 To lastRow  ' Start from row 2 (assuming row 1 has headers)
+        ' Get values from SPECIFIC SHEET
+        On Error Resume Next
+        natAccount = CStr(specificSheet.Cells(i, 3).Value)  ' Nat Accounts in column C
+        cc = CStr(specificSheet.Cells(i, 5).Value)  ' CC in column E
+        
+        ' Check if amount cell has a value
+        amount = 0  ' Default to 0
+        If Not IsEmpty(specificSheet.Cells(i, 15)) Then
+            If IsNumeric(specificSheet.Cells(i, 15).Value) Then
+                amount = CDbl(specificSheet.Cells(i, 15).Value)  ' Amounts in column O
+            Else
+                ' Try to handle comma decimal separators
+                Dim tempAmount As String
+                tempAmount = CStr(specificSheet.Cells(i, 15).Value)
+                tempAmount = Replace(tempAmount, ",", ".")
+                If IsNumeric(tempAmount) Then
+                    amount = CDbl(tempAmount)
+                End If
+            End If
+        End If
+        On Error GoTo 0
+        
+        ' Skip if any essential value is missing
+        If Len(Trim(natAccount)) = 0 Or Len(Trim(cc)) = 0 Then
+            rowsSkipped = rowsSkipped + 1
+            GoTo NextDataRow
+        End If
+        
+        ' Find Description 2 in Account Mapping for this Nat Account
+        desc2 = ""
+        Dim mappingLastRow As Long
+        mappingLastRow = accountMappingSheet.Cells(accountMappingSheet.Rows.Count, "B").End(xlUp).Row
+        
+        For j = 2 To mappingLastRow  ' Assuming row 1 has headers
+            On Error Resume Next
+            If CStr(accountMappingSheet.Cells(j, 2).Value) = natAccount Then  ' Column B has Account numbers
+                desc2 = CStr(accountMappingSheet.Cells(j, 4).Value)  ' Column D has Description 2
+                mappingsFound = mappingsFound + 1
+                Exit For
+            End If
+            On Error GoTo 0
+        Next j
+        
+        If Len(Trim(desc2)) = 0 Then
+            ' If no mapping found, log it and skip this row
+            AddLog Now(), "Mapping Missing", "No Description 2 mapping found for account: " & natAccount, "Warning", logSheet, logRow
+            rowsSkipped = rowsSkipped + 1
+            GoTo NextDataRow
+        End If
+        
+        ' Map Description 2 to the format used in Forecast sheet
+        Dim mappedDesc2 As String
+        mappedDesc2 = desc2  ' Default to use as-is
+        
+        On Error Resume Next
+        If desc2Mappings.Exists(CStr(desc2)) Then
+            mappedDesc2 = CStr(desc2Mappings(CStr(desc2)))
+        Else
+            AddLog Now(), "Desc2 Mapping Missing", "No mapping found for Description 2: " & desc2 & ". Using as-is.", "Warning", logSheet, logRow
+        End If
+        On Error GoTo 0
+        
+        ' Create unique key for this Period, CC and mapped Description 2 combination
+        dictKey = periodFromA1 & "|" & cc & "|" & mappedDesc2
+        
+        ' Add to or update dictionary
+        On Error Resume Next
+        If dataDict.Exists(dictKey) Then
+            dataDict(dictKey) = dataDict(dictKey) + amount
+        Else
+            dataDict.Add dictKey, amount
+        End If
+        On Error GoTo 0
+        
+        rowsProcessed = rowsProcessed + 1
+        
+NextDataRow:
+    Next i
+    
+    ' Log aggregation results
+    AddLog Now(), "Aggregation Complete", "Processed " & rowsProcessed & " rows, skipped " & rowsSkipped & " rows", "Success", logSheet, logRow
+    AddLog Now(), "Unique Combinations", "Found " & dataDict.Count & " unique CC and Description 2 combinations", "Info", logSheet, logRow
+    
+    ' Clear previous values in the period columns for each CC
+    For i = 0 To UBound(ccPositions)
+        Dim ccVal As String
+        ccVal = CStr(forecastSheet.Cells(ccPositions(i), 3).Value)
+        
+        ' Only clear if we found a period column for this CC
+        If ccPeriodColumns.Exists(ccVal) Then
+            Dim colToClear As Long
+            colToClear = ccPeriodColumns(ccVal)
+            
+            ' Calculate range to clear
+            Dim clearStartRow As Long, clearEndRow As Long
+            clearStartRow = ccPositions(i) + 1
+            
+            If i < UBound(ccPositions) Then
+                clearEndRow = ccPositions(i + 1) - 2
+            Else
+                clearEndRow = ccPositions(i) + 15
+            End If
+            
+            ' Clear the column
+            forecastSheet.Range(forecastSheet.Cells(clearStartRow, colToClear), _
+                              forecastSheet.Cells(clearEndRow, colToClear)).ClearContents
+            
+            AddLog Now(), "Data Cleared", "For CC: " & ccVal & ", cleared column " & colToClear & " (rows " & clearStartRow & "-" & clearEndRow & ")", "Success", logSheet, logRow
+        End If
+    Next i
+    
+    ' Populate the Forecast sheet with aggregated data
+    Dim dictKeys As Variant
+    Dim parts As Variant
+    Dim currentCC As String
+    Dim currentDesc2 As String
+    Dim entriesPopulated As Long
+    Dim ccDescFound As Long
+    
+    dictKeys = dataDict.Keys
+    entriesPopulated = 0
+    ccDescFound = 0
+    
+    ' Loop through each unique CC and Description 2 combination
+    For i = 0 To dataDict.Count - 1
+        On Error Resume Next
+        ' Split dictionary key back into Period, CC and Description 2
+        parts = Split(dictKeys(i), "|")
+        If UBound(parts) >= 2 Then
+            Dim keyPeriod As String
+            keyPeriod = parts(0)
+            currentCC = parts(1)
+            currentDesc2 = parts(2)
+            amount = dataDict(dictKeys(i))
+        Else
+            ' Skip if key doesn't split properly
+            AddLog Now(), "Invalid Key", "Dictionary key could not be split: " & dictKeys(i), "Warning", logSheet, logRow
+            GoTo NextCombination
+        End If
+        On Error GoTo 0
+        
+        ' Skip if we don't have a period column for this CC
+        If Not ccPeriodColumns.Exists(currentCC) Then
+            AddLog Now(), "No Column", "No period column found for CC: " & currentCC, "Warning", logSheet, logRow
+            GoTo NextCombination
+        End If
+        
+        ' Get the column number for this CC
+        Dim periodCol As Long
+        periodCol = ccPeriodColumns(currentCC)
+        
+        ' Find which CC position to use in the Forecast sheet
+        Dim ccFound As Boolean
+        ccFound = False
+        
+        For j = 0 To UBound(ccPositions)
+            On Error Resume Next
+            If CStr(forecastSheet.Cells(ccPositions(j), 3).Value) = currentCC Then
+                ccFound = True
+                
+                ' Find where to put the value for this desc2
+                Dim descFound As Boolean
+                descFound = False
+                
+                ' Calculate range to search for Description 2
+                Dim searchEndRow As Long
+                If j < UBound(ccPositions) Then
+                    searchEndRow = ccPositions(j + 1) - 2
+                Else
+                    searchEndRow = ccPositions(j) + 15
+                End If
+                
+                For k = ccPositions(j) + 1 To searchEndRow
+                    If CStr(forecastSheet.Cells(k, 3).Value) = currentDesc2 Then
+                        descFound = True
+                        ccDescFound = ccDescFound + 1
+                        
+                        ' Found the right row for this desc2, place the amount in the period column
+                        forecastSheet.Cells(k, periodCol).Value = amount
+                        
+                        AddLog Now(), "Data Placed", "CC: " & currentCC & ", Desc2: " & currentDesc2 & ", Amount: " & amount, "Cell " & k & "," & periodCol, logSheet, logRow
+                        
+                        entriesPopulated = entriesPopulated + 1
+                        Exit For
+                    End If
+                Next k
+                
+                If Not descFound Then
+                    AddLog Now(), "Missing Description 2", "Could not find Description 2 '" & currentDesc2 & "' under CC '" & currentCC & "'", "Warning", logSheet, logRow
+                End If
+                
+                Exit For
+            End If
+            On Error GoTo 0
+        Next j
+        
+        If Not ccFound Then
+            AddLog Now(), "Missing CC", "Could not find CC '" & currentCC & "' in Forecast sheet", "Warning", logSheet, logRow
+        End If
+        
+NextCombination:
+    Next i
+    
+    ' Format cells as numbers
+    For i = 0 To UBound(ccPositions)
+        Dim formattingCC As String
+        formattingCC = CStr(forecastSheet.Cells(ccPositions(i), 3).Value)
+        
+        If ccPeriodColumns.Exists(formattingCC) Then
+            Dim colToFormat As Long
+            colToFormat = ccPeriodColumns(formattingCC)
+            
+            ' Calculate range to format
+            Dim formatStartRow As Long, formatEndRow As Long
+            formatStartRow = ccPositions(i) + 1
+            
+            If i < UBound(ccPositions) Then
+                formatEndRow = ccPositions(i + 1) - 2
+            Else
+                formatEndRow = ccPositions(i) + 15
+            End If
+            
+            ' Format column as numbers
+            FormatColumnAsNumber forecastSheet, colToFormat, formatStartRow, formatEndRow
+        End If
+    Next i
+    
+    ' Final logging
+    AddLog Now(), "Population Complete", "Populated " & entriesPopulated & " entries out of " & dataDict.Count & " unique combinations", "Success", logSheet, logRow
+    AddLog Now(), "Summary", "Found " & mappingsFound & " account mappings, matched " & ccDescFound & " CC/Description 2 pairs", "Info", logSheet, logRow
+    
+    ' Format log sheet
+    With logSheet.Range("A1:D" & logRow)
+        .Columns.AutoFit
+    End With
+    
+    ' Activate the Forecast sheet to show results
+    forecastSheet.Activate
+    
+    ' Final message
+    MsgBox "Tables in the Forecast sheet have been populated with data from " & specificSheetName & "." & vbNewLine & _
+           "Check the ProcessLog sheet for details.", vbInformation
+    
+CleanupAndExit:
+    Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
+    Application.Calculation = xlCalculationAutomatic
+End Sub
+
+' Helper function to add a log entry
+Sub AddLog(timestamp As Date, action As String, details As String, result As String, logSheet As Worksheet, ByRef logRow As Long)
+    logSheet.Cells(logRow, 1).Value = timestamp
+    logSheet.Cells(logRow, 2).Value = action
+    logSheet.Cells(logRow, 3).Value = details
+    logSheet.Cells(logRow, 4).Value = result
+    logRow = logRow + 1
+End Sub
+
+' Helper function to format a column range as numbers
+Sub FormatColumnAsNumber(ws As Worksheet, col As Long, startRow As Long, endRow As Long)
+    Dim cell As Range
+    
+    For Each cell In ws.Range(ws.Cells(startRow, col), ws.Cells(endRow, col))
+        If IsNumeric(cell.Value) Then
+            cell.NumberFormat = "#,##0.00" ' Standard number format with 2 decimal places
+        End If
+    Next cell
+End Sub
