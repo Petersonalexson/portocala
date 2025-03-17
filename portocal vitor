@@ -1,225 +1,27 @@
-Option Explicit
+Let's break down the revised process using the unique combination of Cost Center and Description 2:
 
-Sub PopulateForecastTables()
-    ' This macro populates tables in the Forecast sheet based on data from SPECIFIC SHEET
-    ' and mappings from Account Mapping and Reference Mapping sheets
-    
-    Dim specificSheet As Worksheet
-    Dim accountMappingSheet As Worksheet
-    Dim refMappingSheet As Worksheet
-    Dim forecastSheet As Worksheet
-    Dim i As Long, j As Long, k As Long
-    Dim lastRow As Long, lastCol As Long
-    Dim found As Boolean
-    Dim natAccount As String, cc As String, amount As Double
-    Dim desc2 As String
-    Dim dateValue As String
-    Dim ccPositions As Variant
-    Dim ccFound As Boolean
-    Dim dateHeaderCol As Long
-    Dim specificSheetName As String
-    Dim originalRange As String, forecastRange As String
-    
-    ' Initialize the CC positions in the Forecast sheet
-    ccPositions = Array(6, 22, 38, 54, 70)
-    
-    Application.ScreenUpdating = False
-    Application.DisplayAlerts = False
-    Application.Calculation = xlCalculationManual
-    
-    ' Get the imported sheet name from Instructions D7
-    Dim instructionsSheet As Worksheet
-    Set instructionsSheet = ThisWorkbook.Sheets("Instructions")
-    
-    If instructionsSheet Is Nothing Then
-        MsgBox "Could not find the 'Instructions' sheet in this workbook.", vbExclamation
-        GoTo CleanupAndExit
-    End If
-    
-    specificSheetName = instructionsSheet.Range("D7").Value
-    
-    If specificSheetName = "" Then
-        MsgBox "Missing sheet name in Instructions cell D7.", vbExclamation
-        GoTo CleanupAndExit
-    End If
-    
-    On Error Resume Next
-    Set specificSheet = ThisWorkbook.Sheets(specificSheetName)
-    Set accountMappingSheet = ThisWorkbook.Sheets("Account Mapping")
-    Set refMappingSheet = ThisWorkbook.Sheets("Reference mapping")
-    Set forecastSheet = ThisWorkbook.Sheets("Forecast")
-    On Error GoTo 0
-    
-    ' Verify all required sheets exist
-    If specificSheet Is Nothing Then
-        MsgBox "Could not find sheet '" & specificSheetName & "' in this workbook.", vbExclamation
-        GoTo CleanupAndExit
-    End If
-    
-    If accountMappingSheet Is Nothing Then
-        MsgBox "Could not find the 'Account Mapping' sheet in this workbook.", vbExclamation
-        GoTo CleanupAndExit
-    End If
-    
-    If refMappingSheet Is Nothing Then
-        MsgBox "Could not find the 'Reference mapping' sheet in this workbook.", vbExclamation
-        GoTo CleanupAndExit
-    End If
-    
-    If forecastSheet Is Nothing Then
-        MsgBox "Could not find the 'Forecast' sheet in this workbook.", vbExclamation
-        GoTo CleanupAndExit
-    End If
-    
-    ' Verify required headers in SPECIFIC SHEET
-    If specificSheet.Range("A1").Value = "" Or _
-       specificSheet.Range("C1").Value = "" Or _
-       specificSheet.Range("E1").Value = "" Or _
-       specificSheet.Range("O1").Value = "" Then
-        MsgBox "Missing required headers in " & specificSheetName & " (A1, C1, E1, O1).", vbExclamation
-        GoTo CleanupAndExit
-    End If
-    
-    ' Verify required headers in Account Mapping
-    If accountMappingSheet.Range("B1").Value = "" Or _
-       accountMappingSheet.Range("D1").Value = "" Then
-        MsgBox "Missing required headers in Account Mapping sheet (B1, D1).", vbExclamation
-        GoTo CleanupAndExit
-    End If
-    
-    ' Get the mapping for the date column
-    originalRange = refMappingSheet.Range("B16").Value
-    forecastRange = refMappingSheet.Range("C16").Value
-    
-    If originalRange = "" Or forecastRange = "" Then
-        MsgBox "Missing mapping in Reference mapping (B16, C16).", vbExclamation
-        GoTo CleanupAndExit
-    End If
-    
-    ' Get the date from SPECIFIC SHEET (F2)
-    dateValue = specificSheet.Range("F2").Value
-    
-    If dateValue = "" Then
-        MsgBox "Missing date value in " & specificSheetName & " (F2).", vbExclamation
-        GoTo CleanupAndExit
-    End If
-    
-    ' Find date column in Forecast sheet based on mapping
-    dateHeaderCol = GetColumnNumberFromReference(forecastRange)
-    
-    ' Set the date in Forecast sheet (C2 per your reference)
-    forecastSheet.Range("C2").Value = dateValue
-    
-    ' Process each row of SPECIFIC SHEET
-    lastRow = specificSheet.Cells(specificSheet.Rows.Count, "A").End(xlUp).Row
-    
-    ' Clear previous values in the date column of the Forecast table
-    For i = 0 To UBound(ccPositions)
-        If i < UBound(ccPositions) Then
-            ' Clear from the current CC position to the next one minus headers
-            forecastSheet.Range(forecastSheet.Cells(ccPositions(i) + 1, dateHeaderCol), _
-                               forecastSheet.Cells(ccPositions(i + 1) - 2, dateHeaderCol)).ClearContents
-        Else
-            ' For the last CC, clear a reasonable number of rows
-            forecastSheet.Range(forecastSheet.Cells(ccPositions(i) + 1, dateHeaderCol), _
-                               forecastSheet.Cells(ccPositions(i) + 15, dateHeaderCol)).ClearContents
-        End If
-    Next i
-    
-    ' Process each row in SPECIFIC SHEET starting from row 2 (assuming row 1 has headers)
-    For i = 2 To lastRow
-        ' Get values from SPECIFIC SHEET
-        natAccount = specificSheet.Cells(i, 3).Value  ' Nat Accounts in column C
-        cc = specificSheet.Cells(i, 5).Value  ' CC in column E
-        
-        ' Check if the amount cell has a value
-        If Not IsEmpty(specificSheet.Cells(i, 15)) Then
-            amount = specificSheet.Cells(i, 15).Value  ' Amounts in column O
-        Else
-            amount = 0  ' Default to 0 if empty
-        End If
-        
-        ' Skip if any essential value is missing
-        If Len(Trim(natAccount)) = 0 Or Len(Trim(cc)) = 0 Then
-            ' Skip to next row
-            GoTo NextRow
-        End If
-        
-        ' Find the Description 2 in Account Mapping for this Nat Account
-        desc2 = ""
-        lastRow = accountMappingSheet.Cells(accountMappingSheet.Rows.Count, "B").End(xlUp).Row
-        
-        For j = 2 To lastRow  ' Assuming row 1 has headers
-            If accountMappingSheet.Cells(j, 2).Value = natAccount Then  ' Column B has Account numbers
-                desc2 = accountMappingSheet.Cells(j, 4).Value  ' Column D has Description 2
-                Exit For
-            End If
-        Next j
-        
-        If Len(Trim(desc2)) = 0 Then
-            ' If no mapping found, skip this row
-            GoTo NextRow
-        End If
-        
-        ' Find which CC position to use in the Forecast sheet
-        ccFound = False
-        For j = 0 To UBound(ccPositions)
-            If forecastSheet.Cells(ccPositions(j), 3).Value = cc Then
-                ccFound = True
-                
-                ' Now find where to put the value for this desc2
-                For k = ccPositions(j) + 1 To ccPositions(j) + 15  ' Check rows below the CC header
-                    If forecastSheet.Cells(k, 3).Value = desc2 Then
-                        ' Found the right row for this desc2, add the amount to the date column
-                        If IsNumeric(forecastSheet.Cells(k, dateHeaderCol).Value) Then
-                            ' If there's already a value, add to it
-                            forecastSheet.Cells(k, dateHeaderCol).Value = _
-                                forecastSheet.Cells(k, dateHeaderCol).Value + amount
-                        Else
-                            ' If no value yet, set it
-                            forecastSheet.Cells(k, dateHeaderCol).Value = amount
-                        End If
-                        Exit For
-                    End If
-                Next k
-                
-                Exit For
-            End If
-        Next j
-        
-NextRow:
-    Next i
-    
-    ' Activate the Forecast sheet to show results
-    forecastSheet.Activate
-    
-    ' Final message
-    MsgBox "Tables in the Forecast sheet have been populated with data from " & specificSheetName & ".", vbInformation
-    
-CleanupAndExit:
-    Application.ScreenUpdating = True
-    Application.DisplayAlerts = True
-    Application.Calculation = xlCalculationAutomatic
-End Sub
+Aggregation by Unique Cost Center and Description 2
 
-Function GetColumnNumberFromReference(ref As String) As Long
-    ' Function to convert a column reference like "C" to a number (3)
-    Dim colLetter As String
-    Dim i As Long
-    
-    ' Extract just the column letter(s) from the reference
-    colLetter = ""
-    For i = 1 To Len(ref)
-        If IsNumeric(Mid(ref, i, 1)) Then
-            Exit For
-        Else
-            colLetter = colLetter & Mid(ref, i, 1)
-        End If
-    Next i
-    
-    ' Convert column letter to number
-    GetColumnNumberFromReference = 0
-    For i = 1 To Len(colLetter)
-        GetColumnNumberFromReference = GetColumnNumberFromReference * 26 + Asc(UCase(Mid(colLetter, i, 1))) - 64
-    Next i
-End Function
+In your specific sheet, you aggregate the amounts by combining the Cost Center (from your raw data) and the corresponding Description 2 (which comes from your account mapping). This unique combination defines each row that will eventually appear in your forecast.
+Period Mapping
+
+Source Period: In the specific sheet, the period is found in cell A1.
+Transformation: This period value is transformed via your reference mapping, where it appears in cell F2.
+Forecast Alignment: The transformed period (now in F2) aligns with the forecast sheet's period header found in cell C2. This ensures that the aggregated amounts are populated under the correct period column in the forecast.
+Forecast Sheet Layout
+
+Cost Center Sections:
+The forecast sheet designates sections for each cost center. For example, you have cost centers starting at cells C6, C22, C38, C54, C70.
+Description 2 Rows:
+Under each cost center section, you list the unique Description 2 values (as determined by your mapping). These rows are where the aggregated amounts will be placed.
+Period Columns:
+To the right of the Description 2 rows, you have columns that correspond to different periods. The header for these columns starts at cell C2.
+Note on Headers:
+There are no additional headers immediately to the right of the cost center cells (like C6, C22, etc.). Instead, the period headers are only present above the columns where the forecast amounts are populated.
+Data Flow Summary
+
+Step 1: From the specific sheet, aggregate amounts by the unique combination of Cost Center and Description 2.
+Step 2: Take the period from cell A1, transform it via the reference mapping (to cell F2), which corresponds to the period header in the forecast sheet (C2).
+Step 3: In the forecast sheet, under each cost center section, list the mapped Description 2 rows.
+Step 4: Populate the aggregated amounts in the correct period column (aligned by the period header from C2) for each unique Cost Center/Description 2 pair.
+This structure ensures that your forecast sheet accurately reflects the data by aligning the period, cost center, and description mapping so that every unique combination is represented with the correct forecast amount under the appropriate period column.
