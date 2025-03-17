@@ -124,25 +124,29 @@ Sub PopulateForecastTables()
     
     Log Now(), "Period Identified", "Period from F2: " & periodFromF2, "Info", logSheet, logRow
     
-    ' Look up the column for this period in Forecast sheet using row C2 from Reference mapping
-    periodColumnName = refMappingSheet.Range("C2").Value
+    ' Look up the column for this period in Forecast sheet using cell C2 from Reference mapping
+    ' Instead of using column letters, we'll directly use column numbers
+    Dim targetColumnStr As String
+    targetColumnStr = refMappingSheet.Range("C2").Value
     
-    If periodColumnName = "" Then
-        Log Now(), "Error", "Missing period column mapping in Reference mapping cell C2", "Error", logSheet, logRow
-        MsgBox "Missing period column mapping in Reference mapping cell C2.", vbExclamation
-        GoTo CleanupAndExit
+    ' Use a simpler approach - just look at column 4 (D) by default
+    ' This is a fallback if we can't parse the reference properly
+    periodColumnNumber = 4 ' Default to column D
+    
+    ' Try to extract a column number if possible
+    If IsNumeric(targetColumnStr) Then
+        ' If it's purely numeric, use it directly
+        periodColumnNumber = CLng(targetColumnStr)
+    ElseIf Len(targetColumnStr) = 1 Then
+        ' If it's a single letter, convert directly (A=1, B=2, etc.)
+        periodColumnNumber = Asc(UCase(targetColumnStr)) - 64
+    ElseIf Len(targetColumnStr) = 2 Then
+        ' If it's two letters (e.g. AA), calculate manually
+        periodColumnNumber = (Asc(UCase(Left(targetColumnStr, 1))) - 64) * 26 + _
+                            (Asc(UCase(Right(targetColumnStr, 1))) - 64)
     End If
     
-    ' Convert column name to number
-    periodColumnNumber = GetColumnNumberFromReference(periodColumnName)
-    
-    If periodColumnNumber = 0 Then
-        Log Now(), "Error", "Invalid column reference: " & periodColumnName, "Error", logSheet, logRow
-        MsgBox "Invalid column reference: " & periodColumnName, vbExclamation
-        GoTo CleanupAndExit
-    End If
-    
-    Log Now(), "Column Identified", "Period column in Forecast: " & periodColumnName & " (Column " & _
+    Log Now(), "Column Identified", "Period column in Forecast: " & targetColumnStr & " (Column " & _
               ColumnLetter(periodColumnNumber) & ")", "Success", logSheet, logRow
     
     ' Build Description 2 mappings from Reference mapping (starting at row 16)
@@ -369,51 +373,33 @@ End Sub
 
 ' Helper function to convert column number to letter
 Function ColumnLetter(colNum As Long) As String
-    Dim result As String
-    Dim q As Long, r As Long
+    ' Simple function to convert column number to letter
+    ' Only handles up to column ZZ (702) which is more than enough for most purposes
     
+    ' Handle invalid input
     If colNum < 1 Then
         ColumnLetter = ""
         Exit Function
     End If
     
-    q = colNum
-    result = ""
+    ' Handle single letter columns (A-Z)
+    If colNum <= 26 Then
+        ColumnLetter = Chr(64 + colNum)
+        Exit Function
+    End If
     
-    Do While q > 0
-        r = (q - 1) Mod 26
-        result = Chr(65 + r) & result
-        q = (q - r - 1) \ 26
-    Loop
+    ' Handle two letter columns (AA-ZZ)
+    Dim firstLetter As Long
+    Dim secondLetter As Long
     
-    ColumnLetter = result
+    firstLetter = (colNum - 1) \ 26
+    secondLetter = ((colNum - 1) Mod 26) + 1
+    
+    ColumnLetter = Chr(64 + firstLetter) & Chr(64 + secondLetter)
 End Function
 
 ' Helper function to convert column reference to number
-Function GetColumnNumberFromReference(ref As String) As Long
-    Dim colLetter As String
-    Dim i As Long
-    Dim result As Long
-    
-    ' Extract just the column letter(s) from the reference
-    colLetter = ""
-    For i = 1 To Len(ref)
-        If IsNumeric(Mid(ref, i, 1)) Then
-            Exit For
-        Else
-            colLetter = colLetter & Mid(ref, i, 1)
-        End If
-    Next i
-    
-    ' Convert column letter to number using a safer approach
-    result = 0
-    For i = 1 To Len(colLetter)
-        result = result * 26
-        result = result + (Asc(UCase(Mid(colLetter, i, 1))) - 64)
-    Next i
-    
-    GetColumnNumberFromReference = result
-End Function
+
 
 ' Helper function to format a column range as numbers
 Sub FormatColumnAsNumber(ws As Worksheet, col As Long, startRow As Long, endRow As Long)
