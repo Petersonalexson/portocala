@@ -61,20 +61,34 @@ Sub PopulateForecastTables()
     
     ' Start logging
     logRow = logSheet.Cells(logSheet.Rows.Count, 1).End(xlUp).Row + 1
-    LogMessage Now(), "Process Start", "Starting population of Forecast tables", "Info", logSheet, logRow
+    logSheet.Cells(logRow, 1).Value = Now()
+    logSheet.Cells(logRow, 2).Value = "Process Start"
+    logSheet.Cells(logRow, 3).Value = "Starting population of Forecast tables"
+    logSheet.Cells(logRow, 4).Value = "Info"
+    logRow = logRow + 1
     
     ' Get the imported sheet name from Instructions D7
     Set instructionsSheet = ThisWorkbook.Sheets("Instructions")
     
     If instructionsSheet Is Nothing Then
-        LogAndMessage "Could not find 'Instructions' sheet", "", "Error", logSheet, logRow
+        logSheet.Cells(logRow, 1).Value = Now()
+        logSheet.Cells(logRow, 2).Value = "Error"
+        logSheet.Cells(logRow, 3).Value = "Could not find 'Instructions' sheet"
+        logSheet.Cells(logRow, 4).Value = "Error"
+        logRow = logRow + 1
+        MsgBox "Could not find 'Instructions' sheet", vbExclamation
         GoTo CleanupAndExit
     End If
     
     specificSheetName = instructionsSheet.Range("D7").Value
     
     If specificSheetName = "" Then
-        LogAndMessage "Missing sheet name in Instructions cell D7", "", "Error", logSheet, logRow
+        logSheet.Cells(logRow, 1).Value = Now()
+        logSheet.Cells(logRow, 2).Value = "Error"
+        logSheet.Cells(logRow, 3).Value = "Missing sheet name in Instructions cell D7"
+        logSheet.Cells(logRow, 4).Value = "Error"
+        logRow = logRow + 1
+        MsgBox "Missing sheet name in Instructions cell D7", vbExclamation
         GoTo CleanupAndExit
     End If
     
@@ -90,22 +104,42 @@ Sub PopulateForecastTables()
     
     ' Verify all required sheets exist
     If specificSheet Is Nothing Then
-        LogAndMessage "Could not find sheet '" & specificSheetName & "'", "", "Error", logSheet, logRow
+        logSheet.Cells(logRow, 1).Value = Now()
+        logSheet.Cells(logRow, 2).Value = "Error"
+        logSheet.Cells(logRow, 3).Value = "Could not find sheet '" & specificSheetName & "'"
+        logSheet.Cells(logRow, 4).Value = "Error"
+        logRow = logRow + 1
+        MsgBox "Could not find sheet '" & specificSheetName & "'", vbExclamation
         GoTo CleanupAndExit
     End If
     
     If accountMappingSheet Is Nothing Then
-        LogAndMessage "Could not find 'Account Mapping' sheet", "", "Error", logSheet, logRow
+        logSheet.Cells(logRow, 1).Value = Now()
+        logSheet.Cells(logRow, 2).Value = "Error"
+        logSheet.Cells(logRow, 3).Value = "Could not find 'Account Mapping' sheet"
+        logSheet.Cells(logRow, 4).Value = "Error"
+        logRow = logRow + 1
+        MsgBox "Could not find 'Account Mapping' sheet", vbExclamation
         GoTo CleanupAndExit
     End If
     
     If refMappingSheet Is Nothing Then
-        LogAndMessage "Could not find 'Reference mapping' sheet", "", "Error", logSheet, logRow
+        logSheet.Cells(logRow, 1).Value = Now()
+        logSheet.Cells(logRow, 2).Value = "Error"
+        logSheet.Cells(logRow, 3).Value = "Could not find 'Reference mapping' sheet"
+        logSheet.Cells(logRow, 4).Value = "Error"
+        logRow = logRow + 1
+        MsgBox "Could not find 'Reference mapping' sheet", vbExclamation
         GoTo CleanupAndExit
     End If
     
     If forecastSheet Is Nothing Then
-        LogAndMessage "Could not find 'Forecast' sheet", "", "Error", logSheet, logRow
+        logSheet.Cells(logRow, 1).Value = Now()
+        logSheet.Cells(logRow, 2).Value = "Error"
+        logSheet.Cells(logRow, 3).Value = "Could not find 'Forecast' sheet"
+        logSheet.Cells(logRow, 4).Value = "Error"
+        logRow = logRow + 1
+        MsgBox "Could not find 'Forecast' sheet", vbExclamation
         GoTo CleanupAndExit
     End If
     
@@ -116,14 +150,34 @@ Sub PopulateForecastTables()
        specificSheet.Range("C1").Value = "" Or _
        specificSheet.Range("E1").Value = "" Or _
        specificSheet.Range("O1").Value = "" Then
-        LogAndMessage "Missing required headers in " & specificSheetName, "Check A1, C1, E1, O1", "Error", logSheet, logRow
+        logSheet.Cells(logRow, 1).Value = Now()
+        logSheet.Cells(logRow, 2).Value = "Error"
+        logSheet.Cells(logRow, 3).Value = "Missing required headers in " & specificSheetName
+        logSheet.Cells(logRow, 4).Value = "Error"
+        logRow = logRow + 1
+        logSheet.Cells(logRow, 1).Value = Now()
+        logSheet.Cells(logRow, 2).Value = "Details"
+        logSheet.Cells(logRow, 3).Value = "Check A1, C1, E1, O1"
+        logSheet.Cells(logRow, 4).Value = "Info"
+        logRow = logRow + 1
+        MsgBox "Missing required headers in " & specificSheetName & vbNewLine & "Check A1, C1, E1, O1", vbExclamation
         GoTo CleanupAndExit
     End If
     
     ' Verify required headers in Account Mapping
     If accountMappingSheet.Range("B1").Value = "" Or _
        accountMappingSheet.Range("D1").Value = "" Then
-        LogAndMessage "Missing required headers in Account Mapping", "Check B1, D1", "Error", logSheet, logRow
+        logSheet.Cells(logRow, 1).Value = Now()
+        logSheet.Cells(logRow, 2).Value = "Error"
+        logSheet.Cells(logRow, 3).Value = "Missing required headers in Account Mapping"
+        logSheet.Cells(logRow, 4).Value = "Error"
+        logRow = logRow + 1
+        logSheet.Cells(logRow, 1).Value = Now()
+        logSheet.Cells(logRow, 2).Value = "Details"
+        logSheet.Cells(logRow, 3).Value = "Check B1, D1"
+        logSheet.Cells(logRow, 4).Value = "Info"
+        logRow = logRow + 1
+        MsgBox "Missing required headers in Account Mapping" & vbNewLine & "Check B1, D1", vbExclamation
         GoTo CleanupAndExit
     End If
     
@@ -548,25 +602,6 @@ Sub LogMessage(timestamp As Date, action As String, details As String, result As
     logSheet.Cells(logRow, 3).Value = details
     logSheet.Cells(logRow, 4).Value = result
     logRow = logRow + 1
-End Sub
-
-' Helper function to log a message and display it to the user
-Sub LogAndMessage(msg As String, details As String, resultType As String, logSheet As Worksheet, ByRef logRow As Long)
-    logSheet.Cells(logRow, 1).Value = Now()
-    logSheet.Cells(logRow, 2).Value = "Error"
-    logSheet.Cells(logRow, 3).Value = msg
-    logSheet.Cells(logRow, 4).Value = resultType
-    logRow = logRow + 1
-    
-    If details <> "" Then
-        logSheet.Cells(logRow, 1).Value = Now()
-        logSheet.Cells(logRow, 2).Value = "Details"
-        logSheet.Cells(logRow, 3).Value = details
-        logSheet.Cells(logRow, 4).Value = "Info"
-        logRow = logRow + 1
-    End If
-    
-    MsgBox msg & IIf(details <> "", vbNewLine & details, ""), vbExclamation
 End Sub
 
 ' Helper function to format a column range as numbers
