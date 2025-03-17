@@ -17,11 +17,8 @@ Sub PopulateForecastTables()
     Dim specificSheetName As String
     
     ' Dictionaries for data aggregation
-    Dim dataDict As Object
-    Set dataDict = CreateObject("Scripting.Dictionary")
-    
-    Dim ccPeriodColumns As Object
-    Set ccPeriodColumns = CreateObject("Scripting.Dictionary")
+    Dim dataDict As Object: Set dataDict = CreateObject("Scripting.Dictionary")
+    Dim ccPeriodColumns As Object: Set ccPeriodColumns = CreateObject("Scripting.Dictionary")
     
     ' For period/description mapping
     Dim periodFromA1 As String
@@ -36,7 +33,6 @@ Sub PopulateForecastTables()
     ccPositions = Array(6, 22, 38, 54, 70)
     
     ' Create (or retrieve) the ProcessLog sheet
-    Set logSheet = Nothing
     On Error Resume Next
     Set logSheet = ThisWorkbook.Sheets("ProcessLog")
     On Error GoTo 0
@@ -55,7 +51,6 @@ Sub PopulateForecastTables()
     Log Now(), "Process Start", "Starting population of Forecast tables", "Info", logSheet, logRow
     
     ' Get the imported sheet name from Instructions D7
-    Set instructionsSheet = Nothing
     On Error Resume Next
     Set instructionsSheet = ThisWorkbook.Sheets("Instructions")
     On Error GoTo 0
@@ -147,9 +142,7 @@ Sub PopulateForecastTables()
     Log Now(), "Period Mapping", "Period mapping: '" & specificPeriodFormat & "' -> '" & forecastPeriodFormat & "'", "Info", logSheet, logRow
     
     ' Load Desc2 mappings from Reference mapping (starting at row 16)
-    Dim desc2Mappings As Object
-    Set desc2Mappings = CreateObject("Scripting.Dictionary")
-    
+    Dim desc2Mappings As Object: Set desc2Mappings = CreateObject("Scripting.Dictionary")
     Dim refLastRow As Long
     refLastRow = refMappingSheet.Cells(refMappingSheet.Rows.Count, "B").End(xlUp).Row
     
@@ -222,9 +215,17 @@ Sub PopulateForecastTables()
     mappingLastRow = accountMappingSheet.Cells(accountMappingSheet.Rows.Count, "B").End(xlUp).Row
     
     For i = 2 To lastRow
+        ' Grab data
         natAccount = Trim(CStr(specificSheet.Cells(i, 3).Value)) ' column C
         cc = Trim(CStr(specificSheet.Cells(i, 5).Value))         ' column E
-        amount = ConvertToDouble(specificSheet.Cells(i, 15).Value) ' column O (safe numeric conversion)
+        
+        ' Log raw data before conversion
+        Dim rawVal As String
+        rawVal = CStr(specificSheet.Cells(i, 15).Value)
+        Log Now(), "Row " & i & " RawData", "NatAcc: " & natAccount & ", CC: " & cc & ", AmountCell(O): " & rawVal, "Info", logSheet, logRow
+        
+        ' Convert to Double with extra logging
+        amount = ConvertToDoubleWithLogging(specificSheet.Cells(i, 15).Value, logSheet, logRow, i, 15)
         
         ' Skip if essential data is missing
         If natAccount = "" Or cc = "" Then
@@ -379,16 +380,15 @@ NextCombo:
     Next i
     
     ' Format numeric cells in the populated columns
-    Dim colToFormat As Long
     For i = LBound(ccPositions) To UBound(ccPositions)
         ccValue = Trim(CStr(forecastSheet.Cells(ccPositions(i), 3).Value))
         
         If ccPeriodColumns.Exists(ccValue) Then
-            colToFormat = ccPeriodColumns(ccValue)
+            colToClear = ccPeriodColumns(ccValue)
             If i < UBound(ccPositions) Then
-                FormatColumnAsNumber forecastSheet, colToFormat, ccPositions(i) + 1, ccPositions(i + 1) - 2
+                FormatColumnAsNumber forecastSheet, colToClear, ccPositions(i) + 1, ccPositions(i + 1) - 2
             Else
-                FormatColumnAsNumber forecastSheet, colToFormat, ccPositions(i) + 1, ccPositions(i) + 15
+                FormatColumnAsNumber forecastSheet, colToClear, ccPositions(i) + 1, ccPositions(i) + 15
             End If
         End If
     Next i
@@ -417,9 +417,9 @@ CleanupAndExit:
     Application.Calculation = xlCalculationAutomatic
 End Sub
 
-'--------------------------------------------------------------------------------
+'----------------------------------------------------------------
 ' Helper function to log messages to the ProcessLog sheet
-'--------------------------------------------------------------------------------
+'----------------------------------------------------------------
 Sub Log(timestamp As Date, action As String, details As String, result As String, logSheet As Worksheet, ByRef logRow As Long)
     logSheet.Cells(logRow, 1).Value = timestamp
     logSheet.Cells(logRow, 2).Value = action
@@ -428,41 +428,48 @@ Sub Log(timestamp As Date, action As String, details As String, result As String
     logRow = logRow + 1
 End Sub
 
-'--------------------------------------------------------------------------------
-' Safely convert a Variant to Double, returning 0 if invalid.
-' Handles commas or periods as decimal separators.
-'--------------------------------------------------------------------------------
-Function ConvertToDouble(val As Variant) As Double
+'----------------------------------------------------------------
+' Convert a cell value to Double with added logging on errors
+' and the exact row/column that caused the issue.
+'----------------------------------------------------------------
+Function ConvertToDoubleWithLogging(val As Variant, logSheet As Worksheet, ByRef logRow As Long, rowIndex As Long, colIndex As Long) As Double
     On Error GoTo ConversionError
     
     If IsEmpty(val) Or IsNull(val) Or IsError(val) Then
-        ConvertToDouble = 0
+        ConvertToDoubleWithLogging = 0
         Exit Function
     End If
     
+    ' If numeric, cast directly
     If IsNumeric(val) Then
-        ConvertToDouble = CDbl(val)
+        ConvertToDoubleWithLogging = CDbl(val)
     Else
+        ' Attempt to convert from string (handling commas/periods)
         Dim temp As String
         temp = CStr(val)
-        
-        ' Replace comma with period before converting
         temp = Replace(temp, ",", ".")
+        
         If IsNumeric(temp) Then
-            ConvertToDouble = CDbl(temp)
+            ConvertToDoubleWithLogging = CDbl(temp)
         Else
-            ConvertToDouble = 0
+            ConvertToDoubleWithLogging = 0
         End If
     End If
     Exit Function
     
 ConversionError:
-    ConvertToDouble = 0
+    ' Log the exact cell and value that failed
+    Log Now(), "ConvertToDouble Error", _
+        "Row: " & rowIndex & ", Col: " & colIndex & ", Value: " & CStr(val) & " => " & Err.Description, _
+        "Error", logSheet, logRow
+    
+    ConvertToDoubleWithLogging = 0
 End Function
 
-'--------------------------------------------------------------------------------
-' Formats the specified column in numeric format (#,##0.00) for the given row range
-'--------------------------------------------------------------------------------
+'----------------------------------------------------------------
+' Formats the specified column in numeric format (#,##0.00) 
+' for the given row range
+'----------------------------------------------------------------
 Sub FormatColumnAsNumber(ws As Worksheet, col As Long, startRow As Long, endRow As Long)
     Dim rng As Range
     Set rng = ws.Range(ws.Cells(startRow, col), ws.Cells(endRow, col))
